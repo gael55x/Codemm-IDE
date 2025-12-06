@@ -21,9 +21,12 @@
   },
   "homepage": "https://github.com/gael55x/Codem-backend#readme",
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.71.2",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
+    "json5": "^2.2.3",
+    "jsonrepair": "^3.13.1",
     "openai": "^6.10.0"
   },
   "devDependencies": {
