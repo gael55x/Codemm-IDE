@@ -15,11 +15,19 @@ export default function Home() {
   >([]);
   const [chatLoading, setChatLoading] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
+  const [user, setUser] = useState<any>(null);
 
   useEffect(() => {
     const stored = localStorage.getItem("codem-theme");
     if (stored === "dark") {
       setDarkMode(true);
+    }
+
+    // Check if user is logged in
+    const token = localStorage.getItem("codem-token");
+    const storedUser = localStorage.getItem("codem-user");
+    if (token && storedUser) {
+      setUser(JSON.parse(storedUser));
     }
   }, []);
 
@@ -62,6 +70,12 @@ export default function Home() {
   }
 
   async function handleGenerate() {
+    const token = localStorage.getItem("codem-token");
+    if (!token) {
+      router.push("/auth/login");
+      return;
+    }
+
     setLoading(true);
     const lastAssistant = [...messages]
       .reverse()
@@ -76,7 +90,10 @@ export default function Home() {
       ]);
       const res = await fetch(`${BACKEND_URL}/activities`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+        },
         body: JSON.stringify({
           prompt: lastAssistant?.content ?? chatInput,
         }),
@@ -138,6 +155,29 @@ export default function Home() {
                 </svg>
               )}
             </button>
+            {user ? (
+              <button
+                onClick={() => router.push("/profile")}
+                className={`rounded-full px-4 py-2 text-sm font-medium transition ${
+                  darkMode
+                    ? "bg-slate-800 text-slate-300 hover:bg-slate-700"
+                    : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                }`}
+              >
+                {user.displayName}
+              </button>
+            ) : (
+              <button
+                onClick={() => router.push("/auth/login")}
+                className={`rounded-full px-4 py-2 text-sm font-medium transition ${
+                  darkMode
+                    ? "bg-slate-800 text-slate-300 hover:bg-slate-700"
+                    : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                }`}
+              >
+                Login
+              </button>
+            )}
             {!loading && (
               <button
                 onClick={handleGenerate}

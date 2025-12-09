@@ -94,12 +94,20 @@ export default function ActivityPage() {
     if (!selectedProblem) return;
     setSubmitting(true);
     try {
+      const token = localStorage.getItem("codem-token");
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+
       const res = await fetch(`${BACKEND_URL}/submit`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({
           code,
           testSuite: selectedProblem.testSuite,
+          activityId,
+          problemId: selectedProblem.id,
         }),
       });
       const data: JudgeResult = await res.json();
@@ -157,6 +165,12 @@ export default function ActivityPage() {
             </p>
           </div>
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => window.location.href = "/"}
+              className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Home
+            </button>
             <div className="rounded-full bg-slate-100 px-4 py-1 text-xs font-medium text-slate-700">
               Time&nbsp;{formatTime(timerSeconds)}
             </div>
