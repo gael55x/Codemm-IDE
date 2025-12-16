@@ -212,6 +212,13 @@ export async function generateFromSession(
     throw err;
   }
 
+  // Guard: reject if problems already generated (prevent accidental re-generation)
+  if (s.problems_json && s.problems_json.trim()) {
+    const err = new Error("Session already has generated problems. Cannot re-generate.");
+    (err as any).status = 409;
+    throw err;
+  }
+
   try {
     // Transition to GENERATING (lock)
     transitionOrThrow(state, "GENERATING");

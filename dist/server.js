@@ -31,7 +31,14 @@ app.post("/run", async (req, res) => {
             return res.status(400).json({ error: "code is required string." });
         }
         if (language !== "java") {
-            return res.status(400).json({ error: "language must be 'java'." });
+            return res.status(400).json({ error: "Only 'java' is supported." });
+        }
+        // Guard: enforce reasonable code length (basic DoS protection)
+        const maxCodeLength = 50000; // 50KB
+        if (code.length > maxCodeLength) {
+            return res.status(400).json({
+                error: `Code exceeds maximum length of ${maxCodeLength} characters.`,
+            });
         }
         const result = await (0, javaRun_1.runJavaCodeOnly)(code);
         res.json({ stdout: result.stdout, stderr: result.stderr });
@@ -45,9 +52,14 @@ app.post("/run", async (req, res) => {
 app.post("/submit", auth_1.optionalAuth, async (req, res) => {
     try {
         const { code, testSuite, activityId, problemId } = req.body ?? {};
-        // Graded execution only: MUST include non-empty test suite.
-        if (typeof code !== "string" || typeof testSuite !== "string" || !testSuite.trim()) {
-            return res.status(400).json({ error: "code and testSuite are required strings." });
+        // Guard: graded execution requires non-empty code and test suite
+        if (typeof code !== "string" || !code.trim()) {
+            return res.status(400).json({ error: "code is required non-empty string." });
+        }
+        if (typeof testSuite !== "string" || !testSuite.trim()) {
+            return res.status(400).json({
+                error: "testSuite is required for graded execution. Use /run for code-only execution.",
+            });
         }
         const result = await (0, judge_1.runJudge)(code, testSuite);
         // Save submission to database if user is authenticated and owns the activity/problem
