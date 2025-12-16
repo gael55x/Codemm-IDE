@@ -11,22 +11,25 @@ function parseCounts(input: string): DifficultyCounts | null {
   const counts: DifficultyCounts = { easy: 0, medium: 0, hard: 0 };
 
   for (const match of lower.matchAll(/(easy|medium|hard)\s*[:=\-]?\s*(\d+)/g)) {
-    const key = match[1] as Difficulty;
-    const value = parseInt(match[2], 10);
-    if (Number.isFinite(value)) counts[key] += value;
+    const key = match[1] as Difficulty | undefined;
+    const rawValue = match[2] ?? "";
+    const value = Number.parseInt(rawValue, 10);
+    if (key && Number.isFinite(value)) counts[key] += value;
   }
 
   for (const match of lower.matchAll(/(\d+)\s*(easy|medium|hard)/g)) {
-    const value = parseInt(match[1], 10);
-    const key = match[2] as Difficulty;
-    if (Number.isFinite(value)) counts[key] += value;
+    const rawValue = match[1] ?? "";
+    const key = match[2] as Difficulty | undefined;
+    const value = Number.parseInt(rawValue, 10);
+    if (key && Number.isFinite(value)) counts[key] += value;
   }
 
   if (counts.easy + counts.medium + counts.hard > 0) return counts;
 
-  const nums = lower.match(/\d+/g)?.map((n) => parseInt(n, 10)) ?? [];
+  const nums = lower.match(/\d+/g)?.map((n) => Number.parseInt(n, 10)) ?? [];
   if (nums.length === 3 && nums.every((n) => Number.isFinite(n))) {
-    return { easy: nums[0], medium: nums[1], hard: nums[2] };
+    const [easy, medium, hard] = nums as [number, number, number];
+    return { easy, medium, hard };
   }
 
   // simple phrases: "mostly medium, one easy, one hard"
