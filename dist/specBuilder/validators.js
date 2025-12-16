@@ -6,6 +6,7 @@ exports.isSpecComplete = isSpecComplete;
 exports.validatePatchedSpecOrError = validatePatchedSpecOrError;
 exports.buildPatchForLanguage = buildPatchForLanguage;
 exports.buildPatchForProblemCount = buildPatchForProblemCount;
+exports.parseDifficultyCounts = parseDifficultyCounts;
 exports.buildPatchForDifficultyPlan = buildPatchForDifficultyPlan;
 exports.buildPatchForTopicTags = buildPatchForTopicTags;
 exports.buildPatchForProblemStyle = buildPatchForProblemStyle;

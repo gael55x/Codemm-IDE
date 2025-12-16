@@ -15,6 +15,8 @@ const patch_1 = require("../specBuilder/patch");
 const activitySpec_1 = require("../contracts/activitySpec");
 const planner_1 = require("../planner");
 const generation_1 = require("../generation");
+const questions_1 = require("../specBuilder/questions");
+const completeness_1 = require("../specBuilder/completeness");
 function requireSession(id) {
     const session = database_1.sessionDb.findById(id);
     if (!session) {
@@ -38,6 +40,42 @@ function parseSpecJson(specJson) {
         return {};
     }
 }
+function parseCollectorBuffer(bufferJson) {
+    if (!bufferJson)
+        return [];
+    try {
+        const parsed = JSON.parse(bufferJson);
+        if (Array.isArray(parsed)) {
+            return parsed.filter((item) => typeof item === "string");
+        }
+    }
+    catch {
+        // ignore parse errors and reset to empty buffer
+    }
+    return [];
+}
+function persistCollectorState(sessionId, state) {
+    database_1.sessionCollectorDb.upsert(sessionId, state.currentQuestionKey, state.buffer);
+    return state;
+}
+function getCollectorState(sessionId, expectedQuestionKey) {
+    const existing = database_1.sessionCollectorDb.findBySessionId(sessionId);
+    if (!existing) {
+        return persistCollectorState(sessionId, { currentQuestionKey: expectedQuestionKey, buffer: [] });
+    }
+    const buffer = parseCollectorBuffer(existing.buffer_json);
+    const storedKey = existing.current_question_key ?? null;
+    if (storedKey !== expectedQuestionKey) {
+        return persistCollectorState(sessionId, { currentQuestionKey: expectedQuestionKey, buffer: [] });
+    }
+    return { currentQuestionKey: storedKey, buffer };
+}
+function getQuestionText(key) {
+    if (!key) {
+        return "Spec looks complete. You can generate the activity.";
+    }
+    return questions_1.QUESTIONS[key];
+}
 function transitionOrThrow(from, to) {
     if (from === to)
         return;
@@ -52,16 +90,21 @@ function createSession(userId) {
     const state = "DRAFT";
     // Contract allows null or {} — DB column is NOT NULL, so we store {}.
     database_1.sessionDb.create(id, state, "{}", userId ?? null);
+    const initialQuestionKey = (0, specBuilder_1.getNextQuestionKey)({});
+    database_1.sessionCollectorDb.upsert(id, initialQuestionKey, []);
     return { sessionId: id, state };
 }
 function getSession(id) {
     const s = requireSession(id);
     const messages = database_1.sessionMessageDb.findBySessionId(id);
+    const spec = parseSpecJson(s.spec_json);
+    const collector = getCollectorState(id, (0, specBuilder_1.getNextQuestionKey)(spec));
     return {
         id: s.id,
         state: s.state,
-        spec: parseSpecJson(s.spec_json),
+        spec,
         messages,
+        collector,
     };
 }
 function processSessionMessage(sessionId, message) {
@@ -73,9 +116,33 @@ function processSessionMessage(sessionId, message) {
         throw err;
     }
     const currentSpec = parseSpecJson(s.spec_json);
-    const result = (0, specBuilder_1.specBuilderStep)(currentSpec, message);
+    const currentQuestionKey = (0, specBuilder_1.getNextQuestionKey)(currentSpec);
+    const currentQuestion = getQuestionText(currentQuestionKey);
     // Always persist user message.
     database_1.sessionMessageDb.create(crypto_1.default.randomUUID(), sessionId, "user", message);
+    const collector = getCollectorState(sessionId, currentQuestionKey);
+    const updatedBuffer = [...collector.buffer, message];
+    persistCollectorState(sessionId, { currentQuestionKey, buffer: updatedBuffer });
+    if (currentQuestionKey) {
+        const completeness = (0, completeness_1.checkAnswerCompleteness)(currentQuestionKey, updatedBuffer, currentSpec);
+        if (!completeness.complete) {
+            const missingNote = completeness.missing.length > 0
+                ? ` Still need: ${completeness.missing.join(", ")}.`
+                : "";
+            const error = `I'll send this once all required items are present.${missingNote}`;
+            database_1.sessionMessageDb.create(crypto_1.default.randomUUID(), sessionId, "assistant", `${error}\n\n${currentQuestion}`);
+            return {
+                accepted: false,
+                state,
+                nextQuestion: currentQuestion,
+                done: false,
+                error,
+                spec: currentSpec,
+            };
+        }
+    }
+    const combined = updatedBuffer.join(" ").trim();
+    const result = (0, specBuilder_1.specBuilderStep)(currentSpec, combined);
     if (!result.accepted) {
         const error = result.error ?? "Invalid answer.";
         const nextQuestion = result.nextQuestion;
@@ -97,6 +164,8 @@ function processSessionMessage(sessionId, message) {
     database_1.sessionDb.updateSpecJson(sessionId, JSON.stringify(nextSpec));
     const nextQuestion = result.nextQuestion;
     database_1.sessionMessageDb.create(crypto_1.default.randomUUID(), sessionId, "assistant", nextQuestion);
+    const nextQuestionKey = (0, specBuilder_1.getNextQuestionKey)(nextSpec);
+    persistCollectorState(sessionId, { currentQuestionKey: nextQuestionKey, buffer: [] });
     // Update session state (strict transitions)
     if (!result.done) {
         // DRAFT -> CLARIFYING, CLARIFYING -> CLARIFYING

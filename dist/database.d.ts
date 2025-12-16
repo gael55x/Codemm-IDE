@@ -49,6 +49,13 @@ export interface DBSessionMessage {
     content: string;
     created_at: string;
 }
+export interface DBSessionCollector {
+    session_id: string;
+    current_question_key: string | null;
+    buffer_json: string;
+    created_at: string;
+    updated_at: string;
+}
 export declare const userDb: {
     create: (username: string, email: string, passwordHash: string, displayName?: string) => number;
     findByUsername: (username: string) => User | undefined;
@@ -83,6 +90,10 @@ export declare const sessionDb: {
     setProblemsJson: (id: string, problemsJson: string) => void;
     setActivityId: (id: string, activityId: string) => void;
     setLastError: (id: string, error: string | null) => void;
+};
+export declare const sessionCollectorDb: {
+    upsert: (sessionId: string, currentQuestionKey: string | null, buffer: string[]) => void;
+    findBySessionId: (sessionId: string) => DBSessionCollector | undefined;
 };
 export declare const sessionMessageDb: {
     create: (id: string, sessionId: string, role: "user" | "assistant", content: string) => void;

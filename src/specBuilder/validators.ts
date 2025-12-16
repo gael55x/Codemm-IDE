@@ -114,7 +114,7 @@ export function buildPatchForProblemCount(answer: string): { patch?: JsonPatchOp
   return { patch: [{ op: "replace", path: "/problem_count", value: n }] };
 }
 
-function parseDifficultyCounts(
+export function parseDifficultyCounts(
   answer: string
 ): { easy?: number; medium?: number; hard?: number } | null {
   const a = answer.toLowerCase();

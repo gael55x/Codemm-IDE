@@ -68,15 +68,16 @@ sessionsRouter.post("/:id/messages", (req, res) => {
 sessionsRouter.get("/:id", (req, res) => {
   try {
     const id = req.params.id as string;
-    const s = getSession(id);
+  const s = getSession(id);
 
-    res.json({
-      sessionId: s.id,
-      state: s.state,
-      spec: s.spec,
-      messages: s.messages,
-    });
-  } catch (err: any) {
+  res.json({
+    sessionId: s.id,
+    state: s.state,
+    spec: s.spec,
+    messages: s.messages,
+    collector: s.collector,
+  });
+} catch (err: any) {
     const status = typeof err?.status === "number" ? err.status : 500;
     if (status >= 500) {
       console.error("Error in GET /sessions/:id:", err);

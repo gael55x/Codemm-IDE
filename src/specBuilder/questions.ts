@@ -29,5 +29,5 @@ export const QUESTIONS: Record<SpecQuestionKey, string> = {
   problem_style: "What problem style do you want? (stdout | return | mixed)",
 
   constraints:
-    "Provide constraints for solutions/tests. Must mention Java 17, JUnit 5, and 'no package declarations'.",
+    "Provide constraints for solutions (tests are auto-generated). Must mention Java 17, JUnit 5, and 'no package declarations'.",
 };

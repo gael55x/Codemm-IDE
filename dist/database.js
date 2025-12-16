@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.sessionMessageDb = exports.sessionDb = exports.submissionDb = exports.activityDb = exports.userDb = void 0;
+exports.sessionMessageDb = exports.sessionCollectorDb = exports.sessionDb = exports.submissionDb = exports.activityDb = exports.userDb = void 0;
 exports.initializeDatabase = initializeDatabase;
 const better_sqlite3_1 = __importDefault(require("better-sqlite3"));
 const path_1 = __importDefault(require("path"));
@@ -44,6 +44,16 @@ function initializeDatabase() {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+    )
+  `);
+    db.exec(`
+    CREATE TABLE IF NOT EXISTS session_collectors (
+      session_id TEXT PRIMARY KEY,
+      current_question_key TEXT,
+      buffer_json TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
     )
   `);
     db.exec(`
@@ -90,6 +100,7 @@ function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
     CREATE INDEX IF NOT EXISTS idx_sessions_state ON sessions(state);
     CREATE INDEX IF NOT EXISTS idx_session_messages_session_id ON session_messages(session_id);
+    CREATE INDEX IF NOT EXISTS idx_session_collectors_session_id ON session_collectors(session_id);
     CREATE INDEX IF NOT EXISTS idx_activities_user_id ON activities(user_id);
     CREATE INDEX IF NOT EXISTS idx_submissions_user_id ON submissions(user_id);
     CREATE INDEX IF NOT EXISTS idx_submissions_activity_id ON submissions(activity_id);
@@ -206,6 +217,21 @@ exports.sessionDb = {
     setLastError: (id, error) => {
         const stmt = db.prepare(`UPDATE sessions SET last_error = ?, updated_at = datetime('now') WHERE id = ?`);
         stmt.run(error, id);
+    },
+};
+exports.sessionCollectorDb = {
+    upsert: (sessionId, currentQuestionKey, buffer) => {
+        const stmt = db.prepare(`INSERT INTO session_collectors (session_id, current_question_key, buffer_json, created_at, updated_at)
+       VALUES (?, ?, ?, datetime('now'), datetime('now'))
+       ON CONFLICT(session_id) DO UPDATE SET
+         current_question_key = excluded.current_question_key,
+         buffer_json = excluded.buffer_json,
+         updated_at = datetime('now')`);
+        stmt.run(sessionId, currentQuestionKey ?? null, JSON.stringify(buffer));
+    },
+    findBySessionId: (sessionId) => {
+        const stmt = db.prepare(`SELECT * FROM session_collectors WHERE session_id = ?`);
+        return stmt.get(sessionId);
     },
 };
 exports.sessionMessageDb = {

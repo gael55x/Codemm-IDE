@@ -46,6 +46,17 @@ export function initializeDatabase() {
   `);
 
   db.exec(`
+    CREATE TABLE IF NOT EXISTS session_collectors (
+      session_id TEXT PRIMARY KEY,
+      current_question_key TEXT,
+      buffer_json TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+    )
+  `);
+
+  db.exec(`
     CREATE TABLE IF NOT EXISTS session_messages (
       id TEXT PRIMARY KEY,
       session_id TEXT NOT NULL,
@@ -92,6 +103,7 @@ export function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
     CREATE INDEX IF NOT EXISTS idx_sessions_state ON sessions(state);
     CREATE INDEX IF NOT EXISTS idx_session_messages_session_id ON session_messages(session_id);
+    CREATE INDEX IF NOT EXISTS idx_session_collectors_session_id ON session_collectors(session_id);
     CREATE INDEX IF NOT EXISTS idx_activities_user_id ON activities(user_id);
     CREATE INDEX IF NOT EXISTS idx_submissions_user_id ON submissions(user_id);
     CREATE INDEX IF NOT EXISTS idx_submissions_activity_id ON submissions(activity_id);
@@ -151,6 +163,14 @@ export interface DBSessionMessage {
   role: "user" | "assistant";
   content: string;
   created_at: string;
+}
+
+export interface DBSessionCollector {
+  session_id: string;
+  current_question_key: string | null;
+  buffer_json: string;
+  created_at: string;
+  updated_at: string;
 }
 
 // User operations
@@ -339,6 +359,25 @@ export const sessionDb = {
       `UPDATE sessions SET last_error = ?, updated_at = datetime('now') WHERE id = ?`
     );
     stmt.run(error, id);
+  },
+};
+
+export const sessionCollectorDb = {
+  upsert: (sessionId: string, currentQuestionKey: string | null, buffer: string[]) => {
+    const stmt = db.prepare(
+      `INSERT INTO session_collectors (session_id, current_question_key, buffer_json, created_at, updated_at)
+       VALUES (?, ?, ?, datetime('now'), datetime('now'))
+       ON CONFLICT(session_id) DO UPDATE SET
+         current_question_key = excluded.current_question_key,
+         buffer_json = excluded.buffer_json,
+         updated_at = datetime('now')`
+    );
+    stmt.run(sessionId, currentQuestionKey ?? null, JSON.stringify(buffer));
+  },
+
+  findBySessionId: (sessionId: string): DBSessionCollector | undefined => {
+    const stmt = db.prepare(`SELECT * FROM session_collectors WHERE session_id = ?`);
+    return stmt.get(sessionId) as DBSessionCollector | undefined;
   },
 };
 

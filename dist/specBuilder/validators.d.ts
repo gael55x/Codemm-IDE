@@ -92,6 +92,11 @@ export declare function buildPatchForProblemCount(answer: string): {
     patch?: JsonPatchOp[];
     error?: string;
 };
+export declare function parseDifficultyCounts(answer: string): {
+    easy?: number;
+    medium?: number;
+    hard?: number;
+} | null;
 export declare function buildPatchForDifficultyPlan(spec: SpecDraft, answer: string): {
     patch?: JsonPatchOp[];
     error?: string;

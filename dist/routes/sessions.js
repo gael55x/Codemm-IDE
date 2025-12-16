@@ -64,6 +64,7 @@ exports.sessionsRouter.get("/:id", (req, res) => {
             state: s.state,
             spec: s.spec,
             messages: s.messages,
+            collector: s.collector,
         });
     }
     catch (err) {
