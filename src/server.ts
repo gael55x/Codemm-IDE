@@ -4,6 +4,7 @@ import dotenv from "dotenv";
 import { ProblemAgent } from "./agent";
 import { Activity, GeneratedProblem } from "./config";
 import { runJudge } from "./judge";
+import { runJavaCodeOnly } from "./execution/javaRun";
 import crypto from "crypto";
 import { initializeDatabase, userDb, activityDb, submissionDb, DBActivity } from "./database";
 import { sessionsRouter } from "./routes/sessions";
@@ -31,6 +32,29 @@ const agent = new ProblemAgent();
 
 // Codemm v1.0 sessions API (guided SpecBuilder chatbot)
 app.use("/sessions", sessionsRouter);
+
+// ==========================
+// Codemm v1.0 Execution Modes
+// ==========================
+
+// Terminal-style execution: code only, no tests, no persistence, no auth required.
+app.post("/run", async (req, res) => {
+  try {
+    const { code, language } = req.body ?? {};
+    if (typeof code !== "string" || !code.trim()) {
+      return res.status(400).json({ error: "code is required string." });
+    }
+    if (language !== "java") {
+      return res.status(400).json({ error: "language must be 'java'." });
+    }
+
+    const result = await runJavaCodeOnly(code);
+    res.json({ stdout: result.stdout, stderr: result.stderr });
+  } catch (err: any) {
+    console.error("Error in /run:", err);
+    res.status(500).json({ error: "Failed to run code.", detail: err?.message });
+  }
+});
 
 app.post("/generate", async (req, res) => {
   try {
@@ -80,7 +104,8 @@ app.post("/chat", async (req, res) => {
 app.post("/submit", optionalAuth, async (req: AuthRequest, res) => {
   try {
     const { code, testSuite, activityId, problemId } = req.body ?? {};
-    if (typeof code !== "string" || typeof testSuite !== "string") {
+    // Graded execution only: MUST include non-empty test suite.
+    if (typeof code !== "string" || typeof testSuite !== "string" || !testSuite.trim()) {
       return res.status(400).json({ error: "code and testSuite are required strings." });
     }
 

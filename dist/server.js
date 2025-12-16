@@ -8,6 +8,7 @@ const cors_1 = __importDefault(require("cors"));
 const dotenv_1 = __importDefault(require("dotenv"));
 const agent_1 = require("./agent");
 const judge_1 = require("./judge");
+const javaRun_1 = require("./execution/javaRun");
 const crypto_1 = __importDefault(require("crypto"));
 const database_1 = require("./database");
 const sessions_1 = require("./routes/sessions");
@@ -22,6 +23,27 @@ app.use(express_1.default.json({ limit: "1mb" }));
 const agent = new agent_1.ProblemAgent();
 // Codemm v1.0 sessions API (guided SpecBuilder chatbot)
 app.use("/sessions", sessions_1.sessionsRouter);
+// ==========================
+// Codemm v1.0 Execution Modes
+// ==========================
+// Terminal-style execution: code only, no tests, no persistence, no auth required.
+app.post("/run", async (req, res) => {
+    try {
+        const { code, language } = req.body ?? {};
+        if (typeof code !== "string" || !code.trim()) {
+            return res.status(400).json({ error: "code is required string." });
+        }
+        if (language !== "java") {
+            return res.status(400).json({ error: "language must be 'java'." });
+        }
+        const result = await (0, javaRun_1.runJavaCodeOnly)(code);
+        res.json({ stdout: result.stdout, stderr: result.stderr });
+    }
+    catch (err) {
+        console.error("Error in /run:", err);
+        res.status(500).json({ error: "Failed to run code.", detail: err?.message });
+    }
+});
 app.post("/generate", async (req, res) => {
     try {
         const count = typeof req.body?.count === "number" ? req.body.count : 5;
@@ -64,7 +86,8 @@ app.post("/chat", async (req, res) => {
 app.post("/submit", auth_1.optionalAuth, async (req, res) => {
     try {
         const { code, testSuite, activityId, problemId } = req.body ?? {};
-        if (typeof code !== "string" || typeof testSuite !== "string") {
+        // Graded execution only: MUST include non-empty test suite.
+        if (typeof code !== "string" || typeof testSuite !== "string" || !testSuite.trim()) {
             return res.status(400).json({ error: "code and testSuite are required strings." });
         }
         const result = await (0, judge_1.runJudge)(code, testSuite);
