@@ -9,6 +9,7 @@ export interface JudgeResult {
   stdout: string;
   stderr: string;
   executionTimeMs: number;
+  exitCode?: number;
 }
 
 /**

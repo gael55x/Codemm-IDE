@@ -11,6 +11,7 @@ import type { GeneratedProblem } from "../contracts/problem";
 import type { SpecDraft } from "../specBuilder/validators";
 import { ensureFixedFields, isSpecComplete, validatePatchedSpecOrError } from "../specBuilder/validators";
 import { interpretIntent } from "../intentInterpreter";
+import { trace, traceText } from "../utils/trace";
 
 export type SessionRecord = {
   id: string;
@@ -142,6 +143,8 @@ export type ProcessMessageResponse =
 export function processSessionMessage(sessionId: string, message: string): ProcessMessageResponse {
   const s = requireSession(sessionId);
   const state = s.state as SessionState;
+  trace("session.message.start", { sessionId, state });
+  traceText("session.message.user", message, { extra: { sessionId } });
 
   if (state !== "DRAFT" && state !== "CLARIFYING") {
     const err = new Error(`Cannot post messages when session state is ${state}.`);
@@ -160,10 +163,13 @@ export function processSessionMessage(sessionId: string, message: string): Proce
   persistCollectorState(sessionId, { currentQuestionKey, buffer: updatedBuffer });
 
   const combined = updatedBuffer.join(" ").trim();
+  traceText("session.message.combined", combined, { extra: { sessionId, bufferLen: updatedBuffer.length } });
   const fixed = ensureFixedFields(currentSpec as SpecDraft);
   const specWithFixed = fixed.length > 0 ? applyJsonPatch(currentSpec as any, fixed) : currentSpec;
+  trace("session.spec.fixed", { sessionId, fixedOps: fixed.map((op) => op.path) });
 
   const interpreted = interpretIntent(specWithFixed as SpecDraft, combined);
+  trace("session.intent", { sessionId, kind: interpreted.kind });
 
   if (interpreted.kind === "conflict") {
     // Persist assistant clarification.
@@ -197,10 +203,12 @@ export function processSessionMessage(sessionId: string, message: string): Proce
   }
 
   if (interpreted.kind === "patch") {
+    trace("session.intent.patch", { sessionId, ops: interpreted.patch.map((op) => op.path) });
     const nextSpecCandidate = applyJsonPatch(specWithFixed as any, interpreted.patch);
     const contractError = validatePatchedSpecOrError(nextSpecCandidate as SpecDraft);
 
     if (contractError) {
+      trace("session.intent.contract_error", { sessionId, error: contractError });
       const nextQuestion = getNextQuestion(specWithFixed as SpecDraft);
       sessionMessageDb.create(
         crypto.randomUUID(),
@@ -224,6 +232,7 @@ export function processSessionMessage(sessionId: string, message: string): Proce
     const nextQuestion = done
       ? "Spec looks complete. You can generate the activity."
       : getNextQuestion(nextSpecCandidate as SpecDraft);
+    trace("session.intent.applied", { sessionId, done });
 
     const summaryPrefix =
       interpreted.summaryLines.length >= 2

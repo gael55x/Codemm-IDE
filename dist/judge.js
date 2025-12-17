@@ -5,6 +5,7 @@ const child_process_1 = require("child_process");
 const fs_1 = require("fs");
 const os_1 = require("os");
 const path_1 = require("path");
+const trace_1 = require("./utils/trace");
 function execAsync(command, cwd) {
     return new Promise((resolve, reject) => {
         (0, child_process_1.exec)(command, {
@@ -37,6 +38,7 @@ async function runJudge(userCode, testSuite) {
             "codem-java-judge",
         ].join(" ");
         const { stdout, stderr, exitCode } = await execAsync(dockerCmd, tmp);
+        (0, trace_1.trace)("judge.result", { exitCode, stdoutLen: stdout.length, stderrLen: stderr.length });
         const executionTimeMs = Date.now() - start;
         // TODO: parse stdout/stderr to determine passed/failed test names.
         return {
@@ -46,6 +48,7 @@ async function runJudge(userCode, testSuite) {
             stdout,
             stderr,
             executionTimeMs,
+            exitCode,
         };
     }
     catch (e) {

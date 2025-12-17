@@ -6,6 +6,7 @@ import { isValidJUnit5TestSuite } from "../contracts/javaRules";
 import { GeneratedProblemDraftSchema, type GeneratedProblemDraft } from "../contracts/problem";
 import type { ProblemSlot } from "../planner/types";
 import { buildSlotPrompt, V1_PROBLEM_GENERATOR_SYSTEM_PROMPT } from "./prompts";
+import { trace, traceText } from "../utils/trace";
 
 const CODEX_MODEL = process.env.CODEX_MODEL ?? "gpt-4.1";
 const MAX_TOKENS = 5000;
@@ -39,7 +40,13 @@ ${stdoutSnippet || "(empty)"}
 STDERR:
 ${stderrSnippet || "(empty)"}
 
-Here is your previous JSON (you MUST return corrected JSON with the exact same fields; prefer keeping id/title/description/starter_code/test_suite stable, and fix reference_solution so it passes the test_suite):
+Here is your previous JSON.
+
+Goal:
+- Return corrected JSON with the exact same fields.
+- Prefer keeping id/title/description/starter_code stable.
+- You MAY update test_suite and/or reference_solution, but the final pair MUST compile and MUST pass in Docker/JUnit.
+- Keep tests meaningful (no trivial assertions).
 ${previousJson}
 
 Return ONLY valid JSON. No markdown. No code fences. No prose.`;
@@ -60,6 +67,8 @@ export async function generateSingleProblem(
   opts?: { repair?: RepairContext }
 ): Promise<GeneratedProblemDraft> {
   const prompt = opts?.repair ? buildRepairPrompt(slot, opts.repair) : buildSlotPrompt(slot);
+  trace("generation.slot.start", { slotIndex: slot.index, difficulty: slot.difficulty, repair: Boolean(opts?.repair) });
+  traceText("generation.prompt", prompt, { extra: { slotIndex: slot.index, repair: Boolean(opts?.repair) } });
 
   const completion = await createCodexCompletion({
     system: V1_PROBLEM_GENERATOR_SYSTEM_PROMPT,
@@ -72,6 +81,7 @@ export async function generateSingleProblem(
   const text = completion.content
     .map((block) => (block.type === "text" ? block.text : ""))
     .join("\n");
+  traceText("generation.llm.raw", text, { extra: { slotIndex: slot.index } });
 
   // Parse JSON (reuse legacy robust parser)
   const parsed = tryParseJson(text);
@@ -115,6 +125,15 @@ export async function generateSingleProblem(
   if (!isValidJUnit5TestSuite(testSuite, 8)) {
     throw new Error(
       `Invalid test_suite for slot ${slot.index}: must have exactly 8 @Test methods, JUnit 5 imports, no package, and non-trivial assertions.`
+    );
+  }
+
+  // Ensure test class name matches starter_code class name + "Test"
+  const expectedTestClassName = `${className}Test`;
+  const actualTestClassName = inferClassName(testSuite, expectedTestClassName);
+  if (actualTestClassName !== expectedTestClassName) {
+    throw new Error(
+      `Test suite class name "${actualTestClassName}" must match "${expectedTestClassName}".`
     );
   }
 
@@ -177,6 +196,7 @@ export async function generateSingleProblem(
     difficulty,
     topic_tag: topicTag,
   };
+  trace("generation.draft.meta", { slotIndex: slot.index, title, className, difficulty, topicTag });
 
   // Validate against GeneratedProblemDraftSchema
   const result = GeneratedProblemDraftSchema.safeParse(draft);

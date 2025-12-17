@@ -18,6 +18,7 @@ const planner_1 = require("../planner");
 const generation_1 = require("../generation");
 const validators_1 = require("../specBuilder/validators");
 const intentInterpreter_1 = require("../intentInterpreter");
+const trace_1 = require("../utils/trace");
 function requireSession(id) {
     const session = database_1.sessionDb.findById(id);
     if (!session) {
@@ -105,6 +106,8 @@ function getSession(id) {
 function processSessionMessage(sessionId, message) {
     const s = requireSession(sessionId);
     const state = s.state;
+    (0, trace_1.trace)("session.message.start", { sessionId, state });
+    (0, trace_1.traceText)("session.message.user", message, { extra: { sessionId } });
     if (state !== "DRAFT" && state !== "CLARIFYING") {
         const err = new Error(`Cannot post messages when session state is ${state}.`);
         err.status = 409;
@@ -118,9 +121,12 @@ function processSessionMessage(sessionId, message) {
     const updatedBuffer = [...collector.buffer, message];
     persistCollectorState(sessionId, { currentQuestionKey, buffer: updatedBuffer });
     const combined = updatedBuffer.join(" ").trim();
+    (0, trace_1.traceText)("session.message.combined", combined, { extra: { sessionId, bufferLen: updatedBuffer.length } });
     const fixed = (0, validators_1.ensureFixedFields)(currentSpec);
     const specWithFixed = fixed.length > 0 ? (0, patch_1.applyJsonPatch)(currentSpec, fixed) : currentSpec;
+    (0, trace_1.trace)("session.spec.fixed", { sessionId, fixedOps: fixed.map((op) => op.path) });
     const interpreted = (0, intentInterpreter_1.interpretIntent)(specWithFixed, combined);
+    (0, trace_1.trace)("session.intent", { sessionId, kind: interpreted.kind });
     if (interpreted.kind === "conflict") {
         // Persist assistant clarification.
         const content = interpreted.message;
@@ -148,9 +154,11 @@ function processSessionMessage(sessionId, message) {
         };
     }
     if (interpreted.kind === "patch") {
+        (0, trace_1.trace)("session.intent.patch", { sessionId, ops: interpreted.patch.map((op) => op.path) });
         const nextSpecCandidate = (0, patch_1.applyJsonPatch)(specWithFixed, interpreted.patch);
         const contractError = (0, validators_1.validatePatchedSpecOrError)(nextSpecCandidate);
         if (contractError) {
+            (0, trace_1.trace)("session.intent.contract_error", { sessionId, error: contractError });
             const nextQuestion = (0, specBuilder_1.getNextQuestion)(specWithFixed);
             database_1.sessionMessageDb.create(crypto_1.default.randomUUID(), sessionId, "assistant", `${contractError}\n\n${nextQuestion}`);
             return {
@@ -167,6 +175,7 @@ function processSessionMessage(sessionId, message) {
         const nextQuestion = done
             ? "Spec looks complete. You can generate the activity."
             : (0, specBuilder_1.getNextQuestion)(nextSpecCandidate);
+        (0, trace_1.trace)("session.intent.applied", { sessionId, done });
         const summaryPrefix = interpreted.summaryLines.length >= 2
             ? `Got it: ${interpreted.summaryLines.join("; ")}\n\n`
             : "";

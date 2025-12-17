@@ -2,9 +2,11 @@ import type { GeneratedProblemDraft } from "../contracts/problem";
 export declare class ReferenceSolutionValidationError extends Error {
     judgeStdout: string;
     judgeStderr: string;
+    exitCode: number | undefined;
     constructor(message: string, opts: {
         stdout: string;
         stderr: string;
+        exitCode?: number;
     });
 }
 /**

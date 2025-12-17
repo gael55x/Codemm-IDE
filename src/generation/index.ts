@@ -5,6 +5,7 @@ import {
   ReferenceSolutionValidationError,
   validateReferenceSolution,
 } from "./referenceSolutionValidator";
+import { trace } from "../utils/trace";
 
 /**
  * Discard reference_solution from GeneratedProblemDraft to produce GeneratedProblem.
@@ -33,6 +34,14 @@ export async function generateProblemsFromPlan(plan: ProblemPlan): Promise<Gener
   const maxAttempts = 3;
 
   for (const slot of plan) {
+    trace("generation.slot.plan", {
+      slotIndex: slot.index,
+      difficulty: slot.difficulty,
+      topics: slot.topics,
+      language: slot.language,
+      problemStyle: slot.problem_style,
+    });
+
     let problem: GeneratedProblem | null = null;
     let attempts = 0;
     let lastError: Error | null = null;
@@ -44,6 +53,7 @@ export async function generateProblemsFromPlan(plan: ProblemPlan): Promise<Gener
     while (!problem && attempts < maxAttempts) {
       attempts++;
       try {
+        trace("generation.attempt.start", { slotIndex: slot.index, attempts });
         // Step 1: Generate single problem via LLM (includes reference_solution)
         const draft: GeneratedProblemDraft = await generateSingleProblem(slot, repair ? { repair } : undefined);
         lastDraft = draft;
@@ -53,6 +63,7 @@ export async function generateProblemsFromPlan(plan: ProblemPlan): Promise<Gener
 
         // Step 3: Discard reference_solution (CRITICAL: do not persist)
         problem = discardReferenceSolution(draft);
+        trace("generation.attempt.success", { slotIndex: slot.index, attempts, title: draft.title });
       } catch (err: any) {
         lastError = err;
         console.warn(
@@ -66,6 +77,7 @@ export async function generateProblemsFromPlan(plan: ProblemPlan): Promise<Gener
             judgeStdout: err.judgeStdout,
             judgeStderr: err.judgeStderr,
           };
+          trace("generation.attempt.repair", { slotIndex: slot.index, attempts, exitCode: err.exitCode });
         } else {
           repair = undefined;
         }

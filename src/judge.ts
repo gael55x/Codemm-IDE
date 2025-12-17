@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { JudgeResult } from "./types";
+import { trace } from "./utils/trace";
 
 function execAsync(
   command: string,
@@ -50,6 +51,7 @@ export async function runJudge(userCode: string, testSuite: string): Promise<Jud
     ].join(" ");
 
     const { stdout, stderr, exitCode } = await execAsync(dockerCmd, tmp);
+    trace("judge.result", { exitCode, stdoutLen: stdout.length, stderrLen: stderr.length });
 
     const executionTimeMs = Date.now() - start;
 
@@ -61,6 +63,7 @@ export async function runJudge(userCode: string, testSuite: string): Promise<Jud
       stdout,
       stderr,
       executionTimeMs,
+      exitCode,
     };
   } catch (e: any) {
     const executionTimeMs = Date.now() - start;
@@ -76,4 +79,3 @@ export async function runJudge(userCode: string, testSuite: string): Promise<Jud
     rmSync(tmp, { recursive: true, force: true });
   }
 }
-

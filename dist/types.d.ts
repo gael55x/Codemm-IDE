@@ -8,6 +8,7 @@ export interface JudgeResult {
     stdout: string;
     stderr: string;
     executionTimeMs: number;
+    exitCode?: number;
 }
 /**
  * Legacy GeneratedProblem shape (used for parsing old activities from DB).

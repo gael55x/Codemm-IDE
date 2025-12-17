@@ -1,15 +1,18 @@
 import { runJudge } from "../judge";
 import type { GeneratedProblemDraft } from "../contracts/problem";
+import { traceText } from "../utils/trace";
 
 export class ReferenceSolutionValidationError extends Error {
   judgeStdout: string;
   judgeStderr: string;
+  exitCode: number | undefined;
 
-  constructor(message: string, opts: { stdout: string; stderr: string }) {
+  constructor(message: string, opts: { stdout: string; stderr: string; exitCode?: number }) {
     super(message);
     this.name = "ReferenceSolutionValidationError";
     this.judgeStdout = opts.stdout;
     this.judgeStderr = opts.stderr;
+    this.exitCode = opts.exitCode;
   }
 }
 
@@ -27,6 +30,8 @@ export class ReferenceSolutionValidationError extends Error {
  */
 export async function validateReferenceSolution(draft: GeneratedProblemDraft): Promise<void> {
   const result = await runJudge(draft.reference_solution, draft.test_suite);
+  traceText("generation.judge.stdout", result.stdout ?? "", { extra: { title: draft.title } });
+  traceText("generation.judge.stderr", result.stderr ?? "", { extra: { title: draft.title } });
 
   const stdoutLower = (result.stdout || "").toLowerCase();
   const stderrLower = (result.stderr || "").toLowerCase();
@@ -38,9 +43,14 @@ export async function validateReferenceSolution(draft: GeneratedProblemDraft): P
 
   if (hasCompileError) {
     const snippet = `${result.stderr || result.stdout || ""}`.slice(0, 1200);
+    const fallback = snippet || `No compiler output captured (exitCode=${result.exitCode ?? "unknown"}).`;
     throw new ReferenceSolutionValidationError(
-      `Reference solution failed to compile for "${draft.title}": ${snippet}`,
-      { stdout: result.stdout, stderr: result.stderr }
+      `Reference solution failed to compile for "${draft.title}": ${fallback}`,
+      {
+        stdout: result.stdout,
+        stderr: result.stderr,
+        ...(result.exitCode === undefined ? {} : { exitCode: result.exitCode }),
+      }
     );
   }
 
@@ -49,9 +59,14 @@ export async function validateReferenceSolution(draft: GeneratedProblemDraft): P
   // For now, accept success === true as "tests passed".
   if (!result.success) {
     const snippet = `${result.stderr || result.stdout || ""}`.slice(0, 1200);
+    const fallback = snippet || `No JUnit output captured (exitCode=${result.exitCode ?? "unknown"}).`;
     throw new ReferenceSolutionValidationError(
-      `Reference solution failed tests for "${draft.title}": ${snippet}`,
-      { stdout: result.stdout, stderr: result.stderr }
+      `Reference solution failed tests for "${draft.title}": ${fallback}`,
+      {
+        stdout: result.stdout,
+        stderr: result.stderr,
+        ...(result.exitCode === undefined ? {} : { exitCode: result.exitCode }),
+      }
     );
   }
 
