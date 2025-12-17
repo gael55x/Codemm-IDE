@@ -15,6 +15,8 @@ export type SessionRecord = {
         currentQuestionKey: string | null;
         buffer: string[];
     };
+    confidence: Record<string, number>;
+    intentTrace: unknown[];
 };
 export declare function createSession(userId?: number | null): {
     sessionId: string;

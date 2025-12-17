@@ -17,7 +17,7 @@ export type IntentResolutionResult = {
     kind: "error";
     error: string;
 };
-declare const IntentResolutionSchema: z.ZodObject<{
+declare const IntentResolutionSchema: z.ZodEffects<z.ZodObject<{
     inferredPatch: z.ZodObject<{
         language: z.ZodOptional<z.ZodEnum<["java"]>>;
         problem_count: z.ZodOptional<z.ZodNumber>;
@@ -56,6 +56,34 @@ declare const IntentResolutionSchema: z.ZodObject<{
     rationale: z.ZodString;
     clarificationQuestion: z.ZodOptional<z.ZodString>;
 }, "strict", z.ZodTypeAny, {
+    inferredPatch: {
+        language?: "java" | undefined;
+        problem_count?: number | undefined;
+        difficulty_plan?: {
+            difficulty: "easy" | "medium" | "hard";
+            count: number;
+        }[] | undefined;
+        topic_tags?: string[] | undefined;
+        problem_style?: string | undefined;
+    };
+    confidence: Record<string, number>;
+    rationale: string;
+    clarificationQuestion?: string | undefined;
+}, {
+    inferredPatch: {
+        language?: "java" | undefined;
+        problem_count?: number | undefined;
+        difficulty_plan?: {
+            difficulty: "easy" | "medium" | "hard";
+            count: number;
+        }[] | undefined;
+        topic_tags?: string[] | undefined;
+        problem_style?: string | undefined;
+    };
+    confidence: Record<string, number>;
+    rationale: string;
+    clarificationQuestion?: string | undefined;
+}>, {
     inferredPatch: {
         language?: "java" | undefined;
         problem_count?: number | undefined;

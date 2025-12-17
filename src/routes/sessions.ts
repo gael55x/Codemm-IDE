@@ -76,6 +76,8 @@ sessionsRouter.get("/:id", (req, res) => {
     spec: s.spec,
     messages: s.messages,
     collector: s.collector,
+    confidence: s.confidence,
+    intentTrace: s.intentTrace,
   });
 } catch (err: any) {
     const status = typeof err?.status === "number" ? err.status : 500;

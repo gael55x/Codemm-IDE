@@ -20,7 +20,47 @@ const validators_1 = require("../specBuilder/validators");
 const intentInterpreter_1 = require("../intentInterpreter");
 const trace_1 = require("../utils/trace");
 const intentResolver_1 = require("../agent/intentResolver");
-const specAnalysis_1 = require("../agent/specAnalysis");
+const readiness_1 = require("../agent/readiness");
+const promptGenerator_1 = require("../agent/promptGenerator");
+function parseJsonObject(json) {
+    if (!json)
+        return {};
+    try {
+        const parsed = JSON.parse(json);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
+            return parsed;
+    }
+    catch {
+        // ignore
+    }
+    return {};
+}
+function parseJsonArray(json) {
+    if (!json)
+        return [];
+    try {
+        const parsed = JSON.parse(json);
+        if (Array.isArray(parsed))
+            return parsed;
+    }
+    catch {
+        // ignore
+    }
+    return [];
+}
+function mergeConfidence(existing, incoming) {
+    const next = { ...existing };
+    for (const [k, v] of Object.entries(incoming)) {
+        if (typeof v !== "number" || !Number.isFinite(v))
+            continue;
+        next[k] = Math.max(0, Math.min(1, v));
+    }
+    return next;
+}
+function appendIntentTrace(existing, entry, maxEntries = 200) {
+    const next = [...existing, entry];
+    return next.length > maxEntries ? next.slice(next.length - maxEntries) : next;
+}
 function requireSession(id) {
     const session = database_1.sessionDb.findById(id);
     if (!session) {
@@ -97,12 +137,16 @@ function getSession(id) {
     const messages = database_1.sessionMessageDb.findBySessionId(id);
     const spec = parseSpecJson(s.spec_json);
     const collector = getCollectorState(id, (0, intent_1.nextSlotKey)(spec));
+    const confidence = parseJsonObject(s.confidence_json);
+    const intentTrace = parseJsonArray(s.intent_trace_json).slice(-50);
     return {
         id: s.id,
         state: s.state,
         spec,
         messages,
         collector,
+        confidence,
+        intentTrace,
     };
 }
 async function processSessionMessage(sessionId, message) {
@@ -133,12 +177,34 @@ async function processSessionMessage(sessionId, message) {
     // - We still enforce strict draft validation before applying
     // - If it can't infer, we fall back to deterministic systems
     if (process.env.CODEMM_AGENT_MODE === "dynamic") {
+        const existingConfidence = parseJsonObject(s.confidence_json);
+        const existingTrace = parseJsonArray(s.intent_trace_json);
+        let effectiveConfidence = { ...existingConfidence };
         const resolved = await (0, intentResolver_1.resolveIntentWithLLM)({
             userMessage: combined,
             currentSpec: specWithFixed,
         }).catch((e) => ({ kind: "error", error: e?.message ?? String(e) }));
+        if ("output" in resolved && resolved.output) {
+            const output = resolved.output;
+            const nextConfidence = mergeConfidence(existingConfidence, output.confidence ?? {});
+            effectiveConfidence = nextConfidence;
+            const nextTrace = appendIntentTrace(existingTrace, {
+                ts: new Date().toISOString(),
+                userMessage: combined,
+                output,
+                result: resolved.kind,
+            });
+            database_1.sessionDb.updateConfidenceJson(sessionId, JSON.stringify(nextConfidence));
+            database_1.sessionDb.updateIntentTraceJson(sessionId, JSON.stringify(nextTrace));
+            (0, trace_1.trace)("session.intent.persisted", {
+                sessionId,
+                confidenceKeys: Object.keys(nextConfidence),
+                traceLen: nextTrace.length,
+            });
+        }
         if (resolved.kind === "clarify") {
-            database_1.sessionMessageDb.create(crypto_1.default.randomUUID(), sessionId, "assistant", resolved.question);
+            const assistantText = resolved.question;
+            database_1.sessionMessageDb.create(crypto_1.default.randomUUID(), sessionId, "assistant", assistantText);
             database_1.sessionDb.updateSpecJson(sessionId, JSON.stringify(specWithFixed));
             persistCollectorState(sessionId, {
                 currentQuestionKey: (0, intent_1.nextSlotKey)(specWithFixed),
@@ -150,7 +216,7 @@ async function processSessionMessage(sessionId, message) {
             return {
                 accepted: true,
                 state: target,
-                nextQuestion: resolved.question,
+                nextQuestion: assistantText,
                 done: false,
                 spec: specWithFixed,
                 patch: fixed,
@@ -159,9 +225,22 @@ async function processSessionMessage(sessionId, message) {
         if (resolved.kind === "patch") {
             const nextSpec = resolved.merged;
             database_1.sessionDb.updateSpecJson(sessionId, JSON.stringify(nextSpec));
-            const gaps = (0, specAnalysis_1.analyzeSpecGaps)(resolved.merged);
-            const done = gaps.complete;
-            const nextQuestion = (0, specAnalysis_1.defaultNextQuestionFromGaps)(gaps);
+            const readiness = (0, readiness_1.computeReadiness)(resolved.merged, effectiveConfidence);
+            (0, trace_1.trace)("session.readiness", {
+                sessionId,
+                schemaComplete: readiness.gaps.complete,
+                ready: readiness.ready,
+                minConfidence: readiness.minConfidence,
+                lowConfidenceFields: readiness.lowConfidenceFields,
+                missing: readiness.gaps.missing,
+            });
+            const done = readiness.ready;
+            const nextQuestion = (0, promptGenerator_1.generateNextPrompt)({
+                spec: resolved.merged,
+                readiness,
+                confidence: effectiveConfidence,
+                lastUserMessage: combined,
+            });
             database_1.sessionMessageDb.create(crypto_1.default.randomUUID(), sessionId, "assistant", nextQuestion);
             persistCollectorState(sessionId, {
                 currentQuestionKey: (0, intent_1.nextSlotKey)(resolved.merged),

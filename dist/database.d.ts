@@ -39,6 +39,8 @@ export interface DBSession {
     problems_json?: string | null;
     activity_id?: string | null;
     last_error?: string | null;
+    confidence_json?: string | null;
+    intent_trace_json?: string | null;
     created_at: string;
     updated_at: string;
 }
@@ -90,6 +92,8 @@ export declare const sessionDb: {
     setProblemsJson: (id: string, problemsJson: string) => void;
     setActivityId: (id: string, activityId: string) => void;
     setLastError: (id: string, error: string | null) => void;
+    updateConfidenceJson: (id: string, confidenceJson: string) => void;
+    updateIntentTraceJson: (id: string, traceJson: string) => void;
 };
 export declare const sessionCollectorDb: {
     upsert: (sessionId: string, currentQuestionKey: string | null, buffer: string[]) => void;

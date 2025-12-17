@@ -33,7 +33,19 @@ const IntentResolutionSchema = zod_1.z
     rationale: zod_1.z.string().trim().min(1).max(1200),
     clarificationQuestion: zod_1.z.string().trim().min(1).max(500).optional(),
 })
-    .strict();
+    .strict()
+    .superRefine((val, ctx) => {
+    const inferredKeys = Object.keys(val.inferredPatch);
+    for (const key of inferredKeys) {
+        if (!(key in val.confidence)) {
+            ctx.addIssue({
+                code: zod_1.z.ZodIssueCode.custom,
+                path: ["confidence", key],
+                message: `confidence must include a score for inferred field "${key}".`,
+            });
+        }
+    }
+});
 function buildSystemPrompt() {
     return `
 You are Codemm's intent resolver.

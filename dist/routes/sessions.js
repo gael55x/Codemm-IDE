@@ -65,6 +65,8 @@ exports.sessionsRouter.get("/:id", (req, res) => {
             spec: s.spec,
             messages: s.messages,
             collector: s.collector,
+            confidence: s.confidence,
+            intentTrace: s.intentTrace,
         });
     }
     catch (err) {

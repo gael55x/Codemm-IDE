@@ -13,7 +13,9 @@ import { ensureFixedFields, isSpecComplete, validatePatchedSpecOrError } from ".
 import { interpretIntent } from "../intentInterpreter";
 import { trace, traceText } from "../utils/trace";
 import { resolveIntentWithLLM } from "../agent/intentResolver";
-import { analyzeSpecGaps, defaultNextQuestionFromGaps } from "../agent/specAnalysis";
+import type { IntentResolutionOutput } from "../agent/intentResolver";
+import { computeReadiness, type ConfidenceMap } from "../agent/readiness";
+import { generateNextPrompt } from "../agent/promptGenerator";
 
 export type SessionRecord = {
   id: string;
@@ -21,12 +23,53 @@ export type SessionRecord = {
   spec: Record<string, unknown>;
   messages: { id: string; role: "user" | "assistant"; content: string; created_at: string }[];
   collector: { currentQuestionKey: string | null; buffer: string[] };
+  confidence: Record<string, number>;
+  intentTrace: unknown[];
 };
 
 type SessionCollectorState = {
   currentQuestionKey: string | null;
   buffer: string[];
 };
+
+function parseJsonObject(json: string | null | undefined): Record<string, unknown> {
+  if (!json) return {};
+  try {
+    const parsed = JSON.parse(json);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+  } catch {
+    // ignore
+  }
+  return {};
+}
+
+function parseJsonArray(json: string | null | undefined): unknown[] {
+  if (!json) return [];
+  try {
+    const parsed = JSON.parse(json);
+    if (Array.isArray(parsed)) return parsed;
+  } catch {
+    // ignore
+  }
+  return [];
+}
+
+function mergeConfidence(
+  existing: ConfidenceMap,
+  incoming: Record<string, number>
+): ConfidenceMap {
+  const next: ConfidenceMap = { ...existing };
+  for (const [k, v] of Object.entries(incoming)) {
+    if (typeof v !== "number" || !Number.isFinite(v)) continue;
+    next[k] = Math.max(0, Math.min(1, v));
+  }
+  return next;
+}
+
+function appendIntentTrace(existing: unknown[], entry: unknown, maxEntries: number = 200): unknown[] {
+  const next = [...existing, entry];
+  return next.length > maxEntries ? next.slice(next.length - maxEntries) : next;
+}
 
 function requireSession(id: string) {
   const session = sessionDb.findById(id);
@@ -114,6 +157,8 @@ export function getSession(id: string): SessionRecord {
   const messages = sessionMessageDb.findBySessionId(id);
   const spec = parseSpecJson(s.spec_json);
   const collector = getCollectorState(id, nextSlotKey(spec as SpecDraft));
+  const confidence = parseJsonObject(s.confidence_json) as Record<string, number>;
+  const intentTrace = parseJsonArray(s.intent_trace_json).slice(-50);
 
   return {
     id: s.id,
@@ -121,6 +166,8 @@ export function getSession(id: string): SessionRecord {
     spec,
     messages,
     collector,
+    confidence,
+    intentTrace,
   };
 }
 
@@ -179,13 +226,37 @@ export async function processSessionMessage(
   // - We still enforce strict draft validation before applying
   // - If it can't infer, we fall back to deterministic systems
   if (process.env.CODEMM_AGENT_MODE === "dynamic") {
+    const existingConfidence = parseJsonObject(s.confidence_json) as ConfidenceMap;
+    const existingTrace = parseJsonArray(s.intent_trace_json);
+    let effectiveConfidence: ConfidenceMap = { ...existingConfidence };
+
     const resolved = await resolveIntentWithLLM({
       userMessage: combined,
       currentSpec: specWithFixed as SpecDraft,
     }).catch((e) => ({ kind: "error" as const, error: e?.message ?? String(e) }));
 
+    if ("output" in resolved && resolved.output) {
+      const output = resolved.output as IntentResolutionOutput;
+      const nextConfidence = mergeConfidence(existingConfidence, output.confidence ?? {});
+      effectiveConfidence = nextConfidence;
+      const nextTrace = appendIntentTrace(existingTrace, {
+        ts: new Date().toISOString(),
+        userMessage: combined,
+        output,
+        result: resolved.kind,
+      });
+      sessionDb.updateConfidenceJson(sessionId, JSON.stringify(nextConfidence));
+      sessionDb.updateIntentTraceJson(sessionId, JSON.stringify(nextTrace));
+      trace("session.intent.persisted", {
+        sessionId,
+        confidenceKeys: Object.keys(nextConfidence),
+        traceLen: nextTrace.length,
+      });
+    }
+
     if (resolved.kind === "clarify") {
-      sessionMessageDb.create(crypto.randomUUID(), sessionId, "assistant", resolved.question);
+      const assistantText = resolved.question;
+      sessionMessageDb.create(crypto.randomUUID(), sessionId, "assistant", assistantText);
 
       sessionDb.updateSpecJson(sessionId, JSON.stringify(specWithFixed));
       persistCollectorState(sessionId, {
@@ -200,7 +271,7 @@ export async function processSessionMessage(
       return {
         accepted: true,
         state: target,
-        nextQuestion: resolved.question,
+        nextQuestion: assistantText,
         done: false,
         spec: specWithFixed,
         patch: fixed,
@@ -211,9 +282,23 @@ export async function processSessionMessage(
       const nextSpec = resolved.merged as Record<string, unknown>;
       sessionDb.updateSpecJson(sessionId, JSON.stringify(nextSpec));
 
-      const gaps = analyzeSpecGaps(resolved.merged);
-      const done = gaps.complete;
-      const nextQuestion = defaultNextQuestionFromGaps(gaps);
+      const readiness = computeReadiness(resolved.merged, effectiveConfidence);
+      trace("session.readiness", {
+        sessionId,
+        schemaComplete: readiness.gaps.complete,
+        ready: readiness.ready,
+        minConfidence: readiness.minConfidence,
+        lowConfidenceFields: readiness.lowConfidenceFields,
+        missing: readiness.gaps.missing,
+      });
+
+      const done = readiness.ready;
+      const nextQuestion = generateNextPrompt({
+        spec: resolved.merged,
+        readiness,
+        confidence: effectiveConfidence,
+        lastUserMessage: combined,
+      });
 
       sessionMessageDb.create(crypto.randomUUID(), sessionId, "assistant", nextQuestion);
       persistCollectorState(sessionId, {

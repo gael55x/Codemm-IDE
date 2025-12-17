@@ -41,11 +41,24 @@ function initializeDatabase() {
       problems_json TEXT,
       activity_id TEXT,
       last_error TEXT,
+      confidence_json TEXT,
+      intent_trace_json TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
     )
   `);
+    // Lightweight migrations for older DBs (SQLite can't add columns in CREATE TABLE IF NOT EXISTS).
+    const sessionCols = db
+        .prepare(`PRAGMA table_info(sessions)`)
+        .all();
+    const sessionColSet = new Set(sessionCols.map((c) => c.name));
+    if (!sessionColSet.has("confidence_json")) {
+        db.exec(`ALTER TABLE sessions ADD COLUMN confidence_json TEXT`);
+    }
+    if (!sessionColSet.has("intent_trace_json")) {
+        db.exec(`ALTER TABLE sessions ADD COLUMN intent_trace_json TEXT`);
+    }
     db.exec(`
     CREATE TABLE IF NOT EXISTS session_collectors (
       session_id TEXT PRIMARY KEY,
@@ -186,9 +199,9 @@ exports.submissionDb = {
 // Codemm v1.0 Session operations (contract-driven)
 exports.sessionDb = {
     create: (id, state, specJson, userId) => {
-        const stmt = db.prepare(`INSERT INTO sessions (id, user_id, state, spec_json, created_at, updated_at)
-       VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))`);
-        stmt.run(id, userId ?? null, state, specJson);
+        const stmt = db.prepare(`INSERT INTO sessions (id, user_id, state, spec_json, confidence_json, intent_trace_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`);
+        stmt.run(id, userId ?? null, state, specJson, "{}", "[]");
     },
     findById: (id) => {
         const stmt = db.prepare(`SELECT * FROM sessions WHERE id = ?`);
@@ -217,6 +230,14 @@ exports.sessionDb = {
     setLastError: (id, error) => {
         const stmt = db.prepare(`UPDATE sessions SET last_error = ?, updated_at = datetime('now') WHERE id = ?`);
         stmt.run(error, id);
+    },
+    updateConfidenceJson: (id, confidenceJson) => {
+        const stmt = db.prepare(`UPDATE sessions SET confidence_json = ?, updated_at = datetime('now') WHERE id = ?`);
+        stmt.run(confidenceJson, id);
+    },
+    updateIntentTraceJson: (id, traceJson) => {
+        const stmt = db.prepare(`UPDATE sessions SET intent_trace_json = ?, updated_at = datetime('now') WHERE id = ?`);
+        stmt.run(traceJson, id);
     },
 };
 exports.sessionCollectorDb = {

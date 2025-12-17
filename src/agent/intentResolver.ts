@@ -41,7 +41,19 @@ const IntentResolutionSchema = z
     rationale: z.string().trim().min(1).max(1200),
     clarificationQuestion: z.string().trim().min(1).max(500).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((val, ctx) => {
+    const inferredKeys = Object.keys(val.inferredPatch);
+    for (const key of inferredKeys) {
+      if (!(key in val.confidence)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["confidence", key],
+          message: `confidence must include a score for inferred field "${key}".`,
+        });
+      }
+    }
+  });
 
 export type IntentResolutionOutput = z.infer<typeof IntentResolutionSchema>;
 
