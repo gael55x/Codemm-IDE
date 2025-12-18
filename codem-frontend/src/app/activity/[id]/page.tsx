@@ -14,6 +14,10 @@ type Problem = {
   // v1.0 uses test_suite, legacy uses testSuite
   test_suite?: string;
   testSuite?: string;
+  workspace?: {
+    files: { path: string; role: "entry" | "support" | "readonly"; content: string }[];
+    entrypoint?: string;
+  };
   constraints: string;
   // v1.0 uses sample_inputs, legacy uses sampleInputs
   sample_inputs?: string[];
@@ -81,7 +85,12 @@ export default function ActivityPage() {
     "Solution.java": "public class Solution {\n}\n",
     "Main.java": buildMainJavaTemplate("Solution"),
   });
+  const [fileRoles, setFileRoles] = useState<Record<string, "entry" | "support" | "readonly">>({
+    "Solution.java": "support",
+    "Main.java": "entry",
+  });
   const [activeFilename, setActiveFilename] = useState<string>("Solution.java");
+  const [entrypointClass, setEntrypointClass] = useState<string>("Main");
   const [timerSeconds, setTimerSeconds] = useState(0);
   const [isTimerRunning, setIsTimerRunning] = useState(false);
   const [result, setResult] = useState<JudgeResult | RunResult | null>(null);
@@ -119,14 +128,36 @@ export default function ActivityPage() {
           if (act.problems.length > 0) {
             const first = act.problems[0];
             setSelectedProblemId(first.id);
-            const starterCode = first.starter_code || first.classSkeleton || "public class Solution {\n}\n";
-            const primaryClassName = inferJavaClassName(starterCode, "Solution");
-            const primaryFilename = `${primaryClassName}.java`;
-            setFiles({
-              [primaryFilename]: starterCode,
-              "Main.java": buildMainJavaTemplate(primaryClassName),
-            });
-            setActiveFilename(primaryFilename);
+            if (first.workspace && Array.isArray(first.workspace.files) && first.workspace.files.length > 0) {
+              const nextFiles: JavaFiles = {};
+              const nextRoles: Record<string, "entry" | "support" | "readonly"> = {};
+              for (const f of first.workspace.files) {
+                nextFiles[f.path] = f.content;
+                nextRoles[f.path] = f.role;
+              }
+              setFiles(nextFiles);
+              setFileRoles(nextRoles);
+              const entryClass = first.workspace.entrypoint ?? "Main";
+              setEntrypointClass(entryClass);
+              const firstEditable =
+                first.workspace.files.find((f) => f.role !== "readonly")?.path ??
+                first.workspace.files[0]!.path;
+              setActiveFilename(firstEditable);
+            } else {
+              const starterCode = first.starter_code || first.classSkeleton || "public class Solution {\n}\n";
+              const primaryClassName = inferJavaClassName(starterCode, "Solution");
+              const primaryFilename = `${primaryClassName}.java`;
+              setFiles({
+                [primaryFilename]: starterCode,
+                "Main.java": buildMainJavaTemplate(primaryClassName),
+              });
+              setFileRoles({
+                [primaryFilename]: "support",
+                "Main.java": "entry",
+              });
+              setEntrypointClass("Main");
+              setActiveFilename(primaryFilename);
+            }
           }
           setIsTimerRunning(true);
         }
@@ -156,8 +187,11 @@ export default function ActivityPage() {
   const testSuite = selectedProblem?.test_suite || selectedProblem?.testSuite || "";
   const testCount = (testSuite.match(/@Test\b/g) ?? []).length;
   const activeCode = files[activeFilename] ?? "";
-  const mainSource = files["Main.java"] ?? "";
-  const canRunMain = hasJavaMainMethod(mainSource);
+  const entryFile =
+    Object.entries(fileRoles).find(([, role]) => role === "entry")?.[0] ?? "Main.java";
+  const entrySource = files[entryFile] ?? "";
+  const canRunMain = hasJavaMainMethod(entrySource);
+  const isActiveReadonly = fileRoles[activeFilename] === "readonly";
 
   async function handleRun() {
     if (!selectedProblem) return;
@@ -165,7 +199,7 @@ export default function ActivityPage() {
       setResult({
         stdout: "",
         stderr:
-          'No `public static void main(String[] args)` detected in Main.java.\n\nThis activity is primarily graded by JUnit tests. Use "Run tests" to see pass/fail, or add a main() method in Main.java if you want to print/debug locally.',
+          `No \`public static void main(String[] args)\` detected in ${entryFile}.\n\nThis activity is primarily graded by JUnit tests. Use "Run tests" to see pass/fail, or add a main() method in the entry file if you want to print/debug locally.`,
       });
       return;
     }
@@ -176,7 +210,7 @@ export default function ActivityPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           files,
-          mainClass: "Main",
+          mainClass: entrypointClass || "Main",
           language: "java",
         }),
       });
@@ -211,7 +245,7 @@ export default function ActivityPage() {
 
       const testSuite = selectedProblem.test_suite || selectedProblem.testSuite || "";
       const filesForTests = Object.fromEntries(
-        Object.entries(files).filter(([filename]) => filename !== "Main.java")
+        Object.entries(files).filter(([filename]) => fileRoles[filename] !== "entry")
       );
 
       const res = await fetch(`${BACKEND_URL}/submit`, {
@@ -222,6 +256,7 @@ export default function ActivityPage() {
           testSuite,
           activityId,
           problemId: selectedProblem.id,
+          language: "java",
         }),
       });
 
@@ -298,6 +333,7 @@ export default function ActivityPage() {
     const className = name.replace(/\.java$/i, "");
     const skeleton = `public class ${className} {\n\n}\n`;
     setFiles((prev) => ({ ...prev, [name]: skeleton }));
+    setFileRoles((prev) => ({ ...prev, [name]: "support" }));
     setActiveFilename(name);
     setResult(null);
   }
@@ -365,13 +401,35 @@ export default function ActivityPage() {
                   onClick={() => {
                     setSelectedProblemId(p.id);
                     const starterCode = p.starter_code || p.classSkeleton || "public class Solution {\n}\n";
-                    const primaryClassName = inferJavaClassName(starterCode, "Solution");
-                    const primaryFilename = `${primaryClassName}.java`;
-                    setFiles({
-                      [primaryFilename]: starterCode,
-                      "Main.java": buildMainJavaTemplate(primaryClassName),
-                    });
-                    setActiveFilename(primaryFilename);
+                    if (p.workspace && Array.isArray(p.workspace.files) && p.workspace.files.length > 0) {
+                      const nextFiles: JavaFiles = {};
+                      const nextRoles: Record<string, "entry" | "support" | "readonly"> = {};
+                      for (const f of p.workspace.files) {
+                        nextFiles[f.path] = f.content;
+                        nextRoles[f.path] = f.role;
+                      }
+                      setFiles(nextFiles);
+                      setFileRoles(nextRoles);
+                      const entryClass = p.workspace.entrypoint ?? "Main";
+                      setEntrypointClass(entryClass);
+                      const firstEditable =
+                        p.workspace.files.find((f) => f.role !== "readonly")?.path ??
+                        p.workspace.files[0]!.path;
+                      setActiveFilename(firstEditable);
+                    } else {
+                      const primaryClassName = inferJavaClassName(starterCode, "Solution");
+                      const primaryFilename = `${primaryClassName}.java`;
+                      setFiles({
+                        [primaryFilename]: starterCode,
+                        "Main.java": buildMainJavaTemplate(primaryClassName),
+                      });
+                      setFileRoles({
+                        [primaryFilename]: "support",
+                        "Main.java": "entry",
+                      });
+                      setEntrypointClass("Main");
+                      setActiveFilename(primaryFilename);
+                    }
                     setResult(null);
                     setShowTests(false);
                     setTimerSeconds(0);
@@ -503,10 +561,10 @@ export default function ActivityPage() {
 		            {selectedProblem && !canRunMain && (
 		              <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
 		                No <span className="font-mono">main()</span> method detected in{" "}
-		                <span className="font-mono">Main.java</span>. Use{" "}
+		                <span className="font-mono">{entryFile}</span>. Use{" "}
 		                <span className="font-semibold">Run tests</span>, or add{" "}
 		                <span className="font-mono">public static void main(String[] args)</span> to{" "}
-		                <span className="font-mono">Main.java</span>.
+		                <span className="font-mono">{entryFile}</span>.
 		              </div>
 		            )}
 	            <div className="h-[70vh] min-h-[520px] max-h-[calc(100vh-220px)] overflow-hidden rounded-xl border border-slate-200 bg-slate-950">
@@ -516,16 +574,18 @@ export default function ActivityPage() {
 	                value={activeCode}
 	                onChange={(value) => {
 	                  const next = value ?? "";
+	                  if (fileRoles[activeFilename] === "readonly") return;
 	                  setFiles((prev) => ({ ...prev, [activeFilename]: next }));
 	                }}
 	                theme="vs-dark"
 	                options={{
 	                  fontSize: 14,
 	                  minimap: { enabled: false },
+	                  readOnly: isActiveReadonly,
 	                }}
-              />
-            </div>
-          </section>
+	              />
+	            </div>
+	          </section>
 
 	          {/* Right: tests / results */}
 	          <section className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-xs">
