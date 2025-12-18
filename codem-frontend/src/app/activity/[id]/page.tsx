@@ -55,6 +55,54 @@ type JavaFiles = Record<string, string>;
 const BACKEND_URL =
   process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
+function stripAnsi(text: string): string {
+  return text.replace(/\u001b\[[0-9;]*m/g, "");
+}
+
+function parseJUnitTree(stdout: string): { passed: string[]; failed: string[] } {
+  const clean = stripAnsi(stdout);
+  const passed: string[] = [];
+  const failed: string[] = [];
+  const seen = new Set<string>();
+
+  for (const line of clean.split(/\r?\n/)) {
+    const m = line.match(/\b([A-Za-z_][A-Za-z0-9_]*)\(\)\s+\[(OK|X)\]\b/);
+    if (!m) continue;
+    const name = m[1]!;
+    const status = m[2]!;
+    const key = `${name}:${status}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (status === "OK") passed.push(name);
+    if (status === "X") failed.push(name);
+  }
+
+  return { passed, failed };
+}
+
+function parseJUnitFailures(stdout: string): Record<string, { message: string; location?: string }> {
+  const clean = stripAnsi(stdout);
+  const failures: Record<string, { message: string; location?: string }> = {};
+
+  // Looks for:
+  // JUnit Jupiter:PersonTest:testNegativeAgeSetsZero()
+  //   ...
+  //   => org.opentest4j.AssertionFailedError: expected: <0> but was: <-5>
+  //      ...
+  //      PersonTest.testNegativeAgeSetsZero(PersonTest.java:23)
+  const re =
+    /JUnit Jupiter:[^:\n]+:([A-Za-z_][A-Za-z0-9_]*)\(\)\s*\n[\s\S]*?=>\s*([^\n]+)(?:[\s\S]*?\(([A-Za-z0-9_]+\.java:\d+)\))?/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(clean)) !== null) {
+    const testName = match[1]!;
+    const message = match[2]!.trim();
+    const location = match[3]?.trim();
+    failures[testName] = { message, location };
+  }
+
+  return failures;
+}
+
 function hasJavaMainMethod(source: string): boolean {
   const withoutBlockComments = source.replace(/\/\*[\s\S]*?\*\//g, "");
   const withoutLineComments = withoutBlockComments.replace(/\/\/.*$/gm, "");
@@ -97,6 +145,8 @@ export default function ActivityPage() {
   const [submitting, setSubmitting] = useState(false);
   const [running, setRunning] = useState(false);
   const [showTests, setShowTests] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -192,6 +242,15 @@ export default function ActivityPage() {
   const entrySource = files[entryFile] ?? "";
   const canRunMain = hasJavaMainMethod(entrySource);
   const isActiveReadonly = fileRoles[activeFilename] === "readonly";
+
+  const junitTree =
+    result && "success" in result ? parseJUnitTree(result.stdout ?? "") : { passed: [], failed: [] };
+  const junitFailures =
+    result && "success" in result ? parseJUnitFailures(result.stdout ?? "") : {};
+  const passedTests =
+    result && "success" in result && result.passedTests.length > 0 ? result.passedTests : junitTree.passed;
+  const failedTests =
+    result && "success" in result && result.failedTests.length > 0 ? result.failedTests : junitTree.failed;
 
   async function handleRun() {
     if (!selectedProblem) return;
@@ -613,10 +672,10 @@ export default function ActivityPage() {
 	          </section>
 
 	          {/* Right: tests / results */}
-	          <section className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-xs">
+	          <section className="flex min-h-0 flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-xs">
 	            <div className="flex items-center justify-between">
 	              <h2 className="text-sm font-semibold text-slate-900">
-	                Results
+	                Feedback
 	              </h2>
 	              {result && "executionTimeMs" in result && (
 	                <span className="rounded-full bg-slate-100 px-3 py-1 font-mono text-[11px] text-slate-700">
@@ -659,76 +718,119 @@ export default function ActivityPage() {
                         : "bg-rose-50 text-rose-700"
                     }`}
                   >
-                    {result.success ? "All tests passed" : "Tests failed"}
+                    {result.success
+                      ? "All tests passed"
+                      : `${failedTests.length || 0} test${(failedTests.length || 0) === 1 ? "" : "s"} failing`}
                   </span>
                 </div>
                 <div className="space-y-2">
                   <div>
-                    <h3 className="mb-1 text-xs font-semibold text-emerald-700">
-                      Passed tests
-                    </h3>
-                    {result.passedTests.length === 0 && (
+                    <h3 className="mb-1 text-xs font-semibold text-emerald-700">Passing</h3>
+                    {passedTests.length === 0 && (
                       <p className="text-xs text-slate-500">None</p>
                     )}
                     <ul className="space-y-1 text-xs text-slate-800">
-                      {result.passedTests.map((t) => (
+                      {passedTests.map((t) => (
                         <li key={t}>✓ {t}</li>
                       ))}
                     </ul>
                   </div>
                   <div>
-                    <h3 className="mb-1 text-xs font-semibold text-rose-700">
-                      Failed tests
-                    </h3>
-                    {result.failedTests.length === 0 && (
+                    <h3 className="mb-1 text-xs font-semibold text-rose-700">Failing</h3>
+                    {failedTests.length === 0 && (
                       <p className="text-xs text-slate-500">None</p>
                     )}
-                    <ul className="space-y-1 text-xs text-slate-800">
-                      {result.failedTests.map((t) => (
-                        <li key={t}>✗ {t}</li>
-                      ))}
-                    </ul>
+                    {failedTests.length > 0 && (
+                      <div className="space-y-2">
+                        {failedTests.map((t) => {
+                          const info = junitFailures[t];
+                          return (
+                            <div key={t} className="rounded-lg border border-rose-200 bg-rose-50 p-2">
+                              <div className="font-semibold text-rose-800">✗ {t}</div>
+                              {info?.message && (
+                                <div className="mt-1 font-mono text-[11px] text-rose-900">
+                                  {info.message}
+                                </div>
+                              )}
+                              {info?.location && (
+                                <div className="mt-1 text-[11px] text-rose-800">
+                                  Location: <span className="font-mono">{info.location}</span>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 </div>
-	                <div className="space-y-1 pt-2">
-	                  <h3 className="text-xs font-semibold text-slate-900">
-	                    stdout
-	                  </h3>
-	                  <pre className="max-h-32 overflow-auto rounded border border-slate-200 bg-slate-50 p-2 font-mono text-[11px] text-slate-800">
-	                    {result.stdout || "(empty)"}
-	                  </pre>
-	                </div>
-	                <div className="space-y-1">
-	                  <h3 className="text-xs font-semibold text-slate-900">
-	                    stderr
-	                  </h3>
-	                  <pre className="max-h-32 overflow-auto rounded border border-slate-200 bg-rose-50/60 p-2 font-mono text-[11px] text-rose-800">
-	                    {result.stderr || "(empty)"}
-	                  </pre>
-	                </div>
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    <button
+                      onClick={() => setShowDetails((v) => !v)}
+                      className="rounded-full border border-slate-300 bg-white px-3 py-1 text-[11px] font-medium text-slate-800 hover:bg-slate-50"
+                    >
+                      {showDetails ? "Hide details" : "Show details"}
+                    </button>
+                    <button
+                      onClick={() => setShowDiagnostics((v) => !v)}
+                      className="rounded-full border border-slate-300 bg-white px-3 py-1 text-[11px] font-medium text-slate-800 hover:bg-slate-50"
+                    >
+                      {showDiagnostics ? "Hide diagnostics" : "Show diagnostics"}
+                    </button>
+                  </div>
+                  {showDetails && (
+                    <div className="space-y-1 pt-2">
+                      <h3 className="text-xs font-semibold text-slate-900">Test runner output</h3>
+                      <pre className="max-h-[38vh] overflow-auto rounded border border-slate-200 bg-slate-50 p-2 font-mono text-[11px] text-slate-800">
+                        {stripAnsi(result.stdout || "") || "(empty)"}
+                      </pre>
+                    </div>
+                  )}
+                  {showDiagnostics && (
+                    <div className="space-y-1">
+                      <h3 className="text-xs font-semibold text-slate-900">Diagnostics</h3>
+                      <pre className="max-h-[24vh] overflow-auto rounded border border-slate-200 bg-rose-50/60 p-2 font-mono text-[11px] text-rose-800">
+                        {stripAnsi(result.stderr || "") || "(empty)"}
+                      </pre>
+                    </div>
+                  )}
 	              </>
 	            )}
             {result && !("success" in result) && (
               <>
-                <div className="space-y-1">
-                  <h3 className="text-xs font-semibold text-slate-900">
-                    stdout
-                  </h3>
-                  <pre className="max-h-40 overflow-auto rounded border border-slate-200 bg-slate-50 p-2 font-mono text-[11px] text-slate-800">
-                    {result.stdout || "(empty)"}
-                  </pre>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => setShowDetails((v) => !v)}
+                    className="rounded-full border border-slate-300 bg-white px-3 py-1 text-[11px] font-medium text-slate-800 hover:bg-slate-50"
+                  >
+                    {showDetails ? "Hide output" : "Show output"}
+                  </button>
+                  <button
+                    onClick={() => setShowDiagnostics((v) => !v)}
+                    className="rounded-full border border-slate-300 bg-white px-3 py-1 text-[11px] font-medium text-slate-800 hover:bg-slate-50"
+                  >
+                    {showDiagnostics ? "Hide diagnostics" : "Show diagnostics"}
+                  </button>
                 </div>
-                <div className="space-y-1">
-                  <h3 className="text-xs font-semibold text-slate-900">
-                    stderr
-                  </h3>
-                  <pre className="max-h-40 overflow-auto rounded border border-slate-200 bg-rose-50/60 p-2 font-mono text-[11px] text-rose-800">
-                    {result.stderr || "(empty)"}
-                  </pre>
-                </div>
+                {showDetails && (
+                  <div className="space-y-1 pt-1">
+                    <h3 className="text-xs font-semibold text-slate-900">Program output</h3>
+                    <pre className="max-h-[38vh] overflow-auto rounded border border-slate-200 bg-slate-50 p-2 font-mono text-[11px] text-slate-800">
+                      {stripAnsi(result.stdout || "") || "(empty)"}
+                    </pre>
+                  </div>
+                )}
+                {showDiagnostics && (
+                  <div className="space-y-1">
+                    <h3 className="text-xs font-semibold text-slate-900">Diagnostics</h3>
+                    <pre className="max-h-[24vh] overflow-auto rounded border border-slate-200 bg-rose-50/60 p-2 font-mono text-[11px] text-rose-800">
+                      {stripAnsi(result.stderr || "") || "(empty)"}
+                    </pre>
+                  </div>
+                )}
               </>
             )}
-          </section>
+	          </section>
         </main>
       </div>
     </div>
