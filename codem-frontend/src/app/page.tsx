@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSpecBuilderUX } from "@/lib/specBuilderUx";
 
@@ -12,6 +12,55 @@ type ChatMessage = {
   content: string;
   tone?: "question" | "hint" | "info";
 };
+
+type TraceEvent = {
+  ts?: string;
+  event?: string;
+  sessionId?: string;
+  slotIndex?: number;
+  attempts?: number;
+  title?: string;
+  difficulty?: string;
+  topics?: string[];
+  exitCode?: number;
+  timedOut?: boolean;
+  kind?: string;
+};
+
+function formatTraceEvent(ev: TraceEvent): string | null {
+  const event = ev.event ?? "";
+  const slotLabel = typeof ev.slotIndex === "number" ? `Problem ${ev.slotIndex + 1}` : null;
+
+  if (event === "trace.ready") return "Connected to generation progress.";
+  if (event === "session.readiness") return "Spec ready — starting generation…";
+  if (event === "generation.slot.plan") {
+    const topics = Array.isArray(ev.topics) ? ev.topics.join(", ") : "";
+    return `${slotLabel ?? "Planned"}: ${ev.difficulty ?? ""}${topics ? ` · ${topics}` : ""}`.trim();
+  }
+  if (event === "generation.attempt.start") {
+    const a = typeof ev.attempts === "number" ? ev.attempts : 1;
+    return `${slotLabel ?? "Generating"}: attempt ${a}`;
+  }
+  if (event === "generation.draft.meta") {
+    return `${slotLabel ?? "Draft"}: ${ev.title ?? "Draft created"}`;
+  }
+  if (event === "judge.result") {
+    const exit = typeof ev.exitCode === "number" ? `exit ${ev.exitCode}` : "";
+    const timeout = ev.timedOut ? " (timed out)" : "";
+    return `Running tests… ${exit}${timeout}`.trim();
+  }
+  if (event === "generation.attempt.success") {
+    return `${slotLabel ?? "Problem"}: ✅ validated`;
+  }
+  if (event === "generation.attempt.repair") {
+    return `${slotLabel ?? "Problem"}: retrying`;
+  }
+  if (event === "generation.failure.persisted") {
+    return `${slotLabel ?? "Problem"}: ❌ failed${ev.kind ? ` (${ev.kind})` : ""}`;
+  }
+
+  return null;
+}
 
 export default function Home() {
   const router = useRouter();
@@ -26,6 +75,10 @@ export default function Home() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessionState, setSessionState] = useState<string | null>(null);
   const [specReady, setSpecReady] = useState(false);
+  const [traceLines, setTraceLines] = useState<string[]>([]);
+  const [traceHint, setTraceHint] = useState<string | null>(null);
+  const [traceOpen, setTraceOpen] = useState(false);
+  const traceRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
     const stored = localStorage.getItem("codem-theme");
@@ -56,6 +109,16 @@ export default function Home() {
       }
     }
     initSession();
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      try {
+        traceRef.current?.close();
+      } catch {
+        // ignore
+      }
+    };
   }, []);
 
   const toggleDarkMode = () => {
@@ -147,6 +210,48 @@ export default function Home() {
         },
       ]);
 
+      // Open progress stream (no chain-of-thought; just structured step events).
+      setTraceLines([]);
+      setTraceHint(null);
+      setTraceOpen(true);
+      try {
+        traceRef.current?.close();
+      } catch {
+        // ignore
+      }
+
+      const es = new EventSource(`${BACKEND_URL}/sessions/${sessionId}/trace`);
+      traceRef.current = es;
+
+      const hintTimer = window.setTimeout(() => {
+        setTraceHint("Progress stream unavailable. Start backend with CODEMM_TRACE=1 (or ./run-codem-backend.sh --trace).");
+      }, 1200);
+
+      es.onmessage = (msg) => {
+        try {
+          const payload = JSON.parse(msg.data) as TraceEvent;
+          const line = formatTraceEvent(payload);
+          if (!line) return;
+          window.clearTimeout(hintTimer);
+          setTraceLines((prev) => {
+            const next = [...prev, line];
+            return next.length > 120 ? next.slice(next.length - 120) : next;
+          });
+        } catch {
+          // ignore parse errors
+        }
+      };
+
+      es.onerror = () => {
+        window.clearTimeout(hintTimer);
+        setTraceHint((prev) => prev ?? "Progress stream disconnected.");
+        try {
+          es.close();
+        } catch {
+          // ignore
+        }
+      };
+
       const res = await fetch(`${BACKEND_URL}/sessions/${sessionId}/generate`, {
         method: "POST",
         headers: {
@@ -158,6 +263,11 @@ export default function Home() {
       const data = await res.json();
 
       if (typeof data.activityId === "string") {
+        try {
+          traceRef.current?.close();
+        } catch {
+          // ignore
+        }
         router.push(`/activity/${data.activityId}`);
       } else if (data?.error) {
         setMessages((prev) => [
@@ -180,6 +290,11 @@ export default function Home() {
         },
       ]);
     } finally {
+      try {
+        traceRef.current?.close();
+      } catch {
+        // ignore
+      }
       setLoading(false);
     }
   }
@@ -263,6 +378,55 @@ export default function Home() {
         {/* Clean chat area */}
         <main className="flex flex-1 flex-col">
           <div className="mb-4 flex-1 space-y-4 overflow-y-auto">
+            {traceOpen && loading && (
+              <div
+                className={`rounded-2xl border px-4 py-3 text-sm ${
+                  darkMode
+                    ? "border-slate-700 bg-slate-900/40 text-slate-100"
+                    : "border-slate-200 bg-white text-slate-900"
+                }`}
+              >
+                <div className="mb-2 flex items-center justify-between">
+                  <div className="text-[11px] font-semibold uppercase tracking-wide opacity-80">
+                    Generation progress
+                  </div>
+                  <button
+                    onClick={() => setTraceOpen((v) => !v)}
+                    className={`rounded-full border px-3 py-1 text-[11px] font-medium ${
+                      darkMode
+                        ? "border-slate-700 bg-slate-800 text-slate-100 hover:bg-slate-700"
+                        : "border-slate-300 bg-white text-slate-800 hover:bg-slate-50"
+                    }`}
+                  >
+                    {traceOpen ? "Hide" : "Show"}
+                  </button>
+                </div>
+                {traceHint && (
+                  <div
+                    className={`mb-2 rounded-lg px-3 py-2 text-[11px] ${
+                      darkMode
+                        ? "bg-amber-900/30 text-amber-200"
+                        : "bg-amber-50 text-amber-900"
+                    }`}
+                  >
+                    {traceHint}
+                  </div>
+                )}
+                <div
+                  className={`max-h-52 space-y-1 overflow-auto rounded-lg border p-2 font-mono text-[11px] ${
+                    darkMode
+                      ? "border-slate-700 bg-slate-950 text-slate-200"
+                      : "border-slate-200 bg-slate-50 text-slate-800"
+                  }`}
+                >
+                  {traceLines.length === 0 ? (
+                    <div className="opacity-70">Waiting for progress events…</div>
+                  ) : (
+                    traceLines.map((l, i) => <div key={i}>• {l}</div>)
+                  )}
+                </div>
+              </div>
+            )}
             {messages.length === 0 && (
               <div className="flex flex-col items-center justify-center py-12 text-center">
                 <div className={`mb-3 flex h-16 w-16 items-center justify-center rounded-full ${darkMode ? "bg-slate-800" : "bg-slate-100"}`}>
