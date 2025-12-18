@@ -4,14 +4,23 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { inferClassName } from "../utils/javaCodegen";
 
+function getRunTimeoutMs(): number {
+  const raw = process.env.CODEMM_RUN_TIMEOUT_MS;
+  if (!raw) return 8000;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return 8000;
+  // Hard cap to avoid runaway local resource use.
+  return Math.min(Math.floor(n), 30_000);
+}
+
 function execAsync(command: string, cwd: string): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     exec(
       command,
       {
         cwd,
-        timeout: 2000,
-        maxBuffer: 256 * 1024,
+        timeout: getRunTimeoutMs(),
+        maxBuffer: 1024 * 1024,
       },
       (error, stdout, stderr) => {
         if (error) {
@@ -96,9 +105,15 @@ export async function runJavaFiles(opts: {
     const { stdout, stderr } = await execAsync(dockerCmd, tmp);
     return { stdout, stderr };
   } catch (e: any) {
+    const msg =
+      typeof e?.error?.message === "string"
+        ? e.error.message
+        : typeof e?.message === "string"
+        ? e.message
+        : "";
     return {
       stdout: e.stdout ?? "",
-      stderr: e.stderr ?? String(e.error ?? e),
+      stderr: e.stderr ?? (msg || String(e.error ?? e)),
     };
   } finally {
     rmSync(tmp, { recursive: true, force: true });
