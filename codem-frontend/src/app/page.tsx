@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSpecBuilderUX } from "@/lib/specBuilderUx";
+import type { GenerationProgressEvent } from "@/types/generationProgress";
 
 const BACKEND_URL =
   process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
@@ -13,54 +14,20 @@ type ChatMessage = {
   tone?: "question" | "hint" | "info";
 };
 
-type TraceEvent = {
-  ts?: string;
-  event?: string;
-  sessionId?: string;
-  slotIndex?: number;
-  attempts?: number;
-  title?: string;
-  difficulty?: string;
-  topics?: string[];
-  exitCode?: number;
-  timedOut?: boolean;
-  kind?: string;
+type ProblemPhase = "queued" | "generating" | "validating" | "retrying" | "validated" | "failed";
+type ProblemProgress = {
+  phase: ProblemPhase;
+  attempt: number | null;
+  difficulty: "easy" | "medium" | "hard" | null;
+  lastFailure: "validation" | "generation" | null;
 };
 
-function formatTraceEvent(ev: TraceEvent): string | null {
-  const event = ev.event ?? "";
-  const slotLabel = typeof ev.slotIndex === "number" ? `Problem ${ev.slotIndex + 1}` : null;
-
-  if (event === "trace.ready") return "Connected to generation progress.";
-  if (event === "session.readiness") return "Spec ready — starting generation…";
-  if (event === "generation.slot.plan") {
-    const topics = Array.isArray(ev.topics) ? ev.topics.join(", ") : "";
-    return `${slotLabel ?? "Planned"}: ${ev.difficulty ?? ""}${topics ? ` · ${topics}` : ""}`.trim();
-  }
-  if (event === "generation.attempt.start") {
-    const a = typeof ev.attempts === "number" ? ev.attempts : 1;
-    return `${slotLabel ?? "Generating"}: attempt ${a}`;
-  }
-  if (event === "generation.draft.meta") {
-    return `${slotLabel ?? "Draft"}: ${ev.title ?? "Draft created"}`;
-  }
-  if (event === "judge.result") {
-    const exit = typeof ev.exitCode === "number" ? `exit ${ev.exitCode}` : "";
-    const timeout = ev.timedOut ? " (timed out)" : "";
-    return `Running tests… ${exit}${timeout}`.trim();
-  }
-  if (event === "generation.attempt.success") {
-    return `${slotLabel ?? "Problem"}: ✅ validated`;
-  }
-  if (event === "generation.attempt.repair") {
-    return `${slotLabel ?? "Problem"}: retrying`;
-  }
-  if (event === "generation.failure.persisted") {
-    return `${slotLabel ?? "Problem"}: ❌ failed${ev.kind ? ` (${ev.kind})` : ""}`;
-  }
-
-  return null;
-}
+type GenerationProgressState = {
+  totalProblems: number;
+  run: number;
+  problems: ProblemProgress[];
+  error: string | null;
+};
 
 export default function Home() {
   const router = useRouter();
@@ -75,10 +42,9 @@ export default function Home() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessionState, setSessionState] = useState<string | null>(null);
   const [specReady, setSpecReady] = useState(false);
-  const [traceLines, setTraceLines] = useState<string[]>([]);
-  const [traceHint, setTraceHint] = useState<string | null>(null);
-  const [traceOpen, setTraceOpen] = useState(false);
-  const traceRef = useRef<EventSource | null>(null);
+  const [progress, setProgress] = useState<GenerationProgressState | null>(null);
+  const [progressHint, setProgressHint] = useState<string | null>(null);
+  const progressRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
     const stored = localStorage.getItem("codem-theme");
@@ -114,7 +80,7 @@ export default function Home() {
   useEffect(() => {
     return () => {
       try {
-        traceRef.current?.close();
+        progressRef.current?.close();
       } catch {
         // ignore
       }
@@ -126,6 +92,25 @@ export default function Home() {
     setDarkMode(newMode);
     localStorage.setItem("codem-theme", newMode ? "dark" : "light");
   };
+
+  function renderOverallPercent(p: GenerationProgressState): number {
+    const validated = p.problems.filter((x) => x.phase === "validated").length;
+    const total = p.totalProblems || 1;
+    return Math.max(0, Math.min(100, Math.round((validated / total) * 100)));
+  }
+
+  function renderProblemStatus(p: ProblemProgress): string {
+    if (p.phase === "queued") return "Queued";
+    if (p.phase === "validated") return "Validated";
+    if (p.phase === "failed") return "Failed";
+    if (p.phase === "generating") return `Generating${p.attempt ? ` (attempt ${p.attempt})` : ""}`;
+    if (p.phase === "validating") return `Validating${p.attempt ? ` (attempt ${p.attempt})` : ""}`;
+    if (p.phase === "retrying") {
+      const prefix = p.lastFailure === "validation" ? "Validation failed, retrying…" : "Retrying…";
+      return `${prefix}${p.attempt ? ` (attempt ${p.attempt})` : ""}`;
+    }
+    return "Queued";
+  }
 
   async function handleChatSend() {
     if (!sessionId) return;
@@ -210,32 +195,126 @@ export default function Home() {
         },
       ]);
 
-      // Open progress stream (no chain-of-thought; just structured step events).
-      setTraceLines([]);
-      setTraceHint(null);
-      setTraceOpen(true);
+      // Open structured progress stream (no prompts, no reasoning, no logs).
+      setProgress(null);
+      setProgressHint(null);
       try {
-        traceRef.current?.close();
+        progressRef.current?.close();
       } catch {
         // ignore
       }
 
-      const es = new EventSource(`${BACKEND_URL}/sessions/${sessionId}/trace`);
-      traceRef.current = es;
+      const es = new EventSource(`${BACKEND_URL}/sessions/${sessionId}/generate/stream`);
+      progressRef.current = es;
 
       const hintTimer = window.setTimeout(() => {
-        setTraceHint("Progress stream unavailable. Start backend with CODEMM_TRACE=1 (or ./run-codem-backend.sh --trace).");
+        setProgressHint("Progress stream unavailable.");
       }, 1200);
 
       es.onmessage = (msg) => {
         try {
-          const payload = JSON.parse(msg.data) as TraceEvent;
-          const line = formatTraceEvent(payload);
-          if (!line) return;
+          const payload = JSON.parse(msg.data) as any;
+          if (payload?.event === "progress.ready") {
+            window.clearTimeout(hintTimer);
+            return;
+          }
+
+          const ev = payload as GenerationProgressEvent;
+          if (!ev || typeof ev.type !== "string") return;
           window.clearTimeout(hintTimer);
-          setTraceLines((prev) => {
-            const next = [...prev, line];
-            return next.length > 120 ? next.slice(next.length - 120) : next;
+
+          setProgress((prev) => {
+            if (ev.type === "generation_started") {
+              const total = Math.max(1, ev.totalProblems);
+              const problems: ProblemProgress[] = Array.from({ length: total }, () => ({
+                phase: "queued",
+                attempt: null,
+                difficulty: null,
+                lastFailure: null,
+              }));
+              return { totalProblems: total, run: ev.run ?? 1, problems, error: null };
+            }
+
+            if (!prev) return prev;
+
+            const next: GenerationProgressState = {
+              ...prev,
+              problems: prev.problems.map((p) => ({ ...p })),
+            };
+
+            if (ev.type === "problem_started") {
+              const p = next.problems[ev.index];
+              if (p) {
+                p.difficulty = ev.difficulty;
+                p.phase = "generating";
+                p.attempt = null;
+                p.lastFailure = null;
+              }
+              return next;
+            }
+
+            if (ev.type === "attempt_started") {
+              const p = next.problems[ev.index];
+              if (p) {
+                p.phase = "generating";
+                p.attempt = ev.attempt;
+              }
+              return next;
+            }
+
+            if (ev.type === "validation_started") {
+              const p = next.problems[ev.index];
+              if (p) {
+                p.phase = "validating";
+                p.attempt = ev.attempt;
+              }
+              return next;
+            }
+
+            if (ev.type === "validation_failed") {
+              const p = next.problems[ev.index];
+              if (p) {
+                p.phase = "retrying";
+                p.attempt = ev.attempt;
+                p.lastFailure = "validation";
+              }
+              return next;
+            }
+
+            if (ev.type === "attempt_failed") {
+              const p = next.problems[ev.index];
+              if (p) {
+                p.phase = "retrying";
+                p.attempt = ev.attempt;
+                p.lastFailure = ev.phase === "validate" ? "validation" : "generation";
+              }
+              return next;
+            }
+
+            if (ev.type === "problem_validated") {
+              const p = next.problems[ev.index];
+              if (p) {
+                p.phase = "validated";
+                p.lastFailure = null;
+              }
+              return next;
+            }
+
+            if (ev.type === "problem_failed") {
+              const p = next.problems[ev.index];
+              if (p) p.phase = "failed";
+              return next;
+            }
+
+            if (ev.type === "generation_failed") {
+              next.error = ev.error || "Generation failed.";
+              for (const p of next.problems) {
+                if (p.phase !== "validated") p.phase = "failed";
+              }
+              return next;
+            }
+
+            return next;
           });
         } catch {
           // ignore parse errors
@@ -244,7 +323,7 @@ export default function Home() {
 
       es.onerror = () => {
         window.clearTimeout(hintTimer);
-        setTraceHint((prev) => prev ?? "Progress stream disconnected.");
+        setProgressHint((prev) => prev ?? "Progress stream disconnected.");
         try {
           es.close();
         } catch {
@@ -264,7 +343,7 @@ export default function Home() {
 
       if (typeof data.activityId === "string") {
         try {
-          traceRef.current?.close();
+          progressRef.current?.close();
         } catch {
           // ignore
         }
@@ -291,7 +370,7 @@ export default function Home() {
       ]);
     } finally {
       try {
-        traceRef.current?.close();
+        progressRef.current?.close();
       } catch {
         // ignore
       }
@@ -378,7 +457,7 @@ export default function Home() {
         {/* Clean chat area */}
         <main className="flex flex-1 flex-col">
           <div className="mb-4 flex-1 space-y-4 overflow-y-auto">
-            {traceOpen && loading && (
+            {loading && (
               <div
                 className={`rounded-2xl border px-4 py-3 text-sm ${
                   darkMode
@@ -390,18 +469,8 @@ export default function Home() {
                   <div className="text-[11px] font-semibold uppercase tracking-wide opacity-80">
                     Generation progress
                   </div>
-                  <button
-                    onClick={() => setTraceOpen((v) => !v)}
-                    className={`rounded-full border px-3 py-1 text-[11px] font-medium ${
-                      darkMode
-                        ? "border-slate-700 bg-slate-800 text-slate-100 hover:bg-slate-700"
-                        : "border-slate-300 bg-white text-slate-800 hover:bg-slate-50"
-                    }`}
-                  >
-                    {traceOpen ? "Hide" : "Show"}
-                  </button>
                 </div>
-                {traceHint && (
+                {progressHint && (
                   <div
                     className={`mb-2 rounded-lg px-3 py-2 text-[11px] ${
                       darkMode
@@ -409,22 +478,59 @@ export default function Home() {
                         : "bg-amber-50 text-amber-900"
                     }`}
                   >
-                    {traceHint}
+                    {progressHint}
                   </div>
                 )}
-                <div
-                  className={`max-h-52 space-y-1 overflow-auto rounded-lg border p-2 font-mono text-[11px] ${
-                    darkMode
-                      ? "border-slate-700 bg-slate-950 text-slate-200"
-                      : "border-slate-200 bg-slate-50 text-slate-800"
-                  }`}
-                >
-                  {traceLines.length === 0 ? (
-                    <div className="opacity-70">Waiting for progress events…</div>
-                  ) : (
-                    traceLines.map((l, i) => <div key={i}>• {l}</div>)
-                  )}
-                </div>
+                {progress ? (
+                  <>
+                    <div className="mb-3">
+                      <div className="mb-1 flex items-center justify-between text-[11px] opacity-80">
+                        <div>Overall progress</div>
+                        <div>{renderOverallPercent(progress)}%</div>
+                      </div>
+                      <div
+                        className={`h-2 w-full overflow-hidden rounded-full ${
+                          darkMode ? "bg-slate-800" : "bg-slate-100"
+                        }`}
+                      >
+                        <div
+                          className="h-full rounded-full bg-blue-500 transition-[width] duration-300"
+                          style={{ width: `${renderOverallPercent(progress)}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    {progress.error && (
+                      <div
+                        className={`mb-3 rounded-lg px-3 py-2 text-[11px] ${
+                          darkMode ? "bg-rose-900/30 text-rose-200" : "bg-rose-50 text-rose-900"
+                        }`}
+                      >
+                        {progress.error}
+                      </div>
+                    )}
+
+                    <div
+                      className={`space-y-1 rounded-lg border p-2 text-[12px] ${
+                        darkMode
+                          ? "border-slate-700 bg-slate-950 text-slate-200"
+                          : "border-slate-200 bg-slate-50 text-slate-800"
+                      }`}
+                    >
+                      {progress.problems.map((p, i) => (
+                        <div key={i} className="flex items-center justify-between gap-3">
+                          <div className="truncate">
+                            Problem {i + 1}/{progress.totalProblems}
+                            {p.difficulty ? ` — ${p.difficulty}` : ""}
+                          </div>
+                          <div className="shrink-0 opacity-80">{renderProblemStatus(p)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <div className="opacity-70">Waiting for progress events…</div>
+                )}
               </div>
             )}
             {messages.length === 0 && (
