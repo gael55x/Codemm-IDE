@@ -2,6 +2,7 @@ import type { ActivitySpec } from "../contracts/activitySpec";
 import type { SpecDraft } from "../compiler/specDraft";
 import type { ConfidenceMap, ReadinessResult } from "./readiness";
 import { listAgentSelectableLanguages } from "../languages/profiles";
+import type { DialogueUpdate, UserEditableSpecKey } from "./dialogue";
 
 function formatKnown(spec: SpecDraft): string {
   const parts: string[] = [];
@@ -26,14 +27,58 @@ function confidenceHint(confidence: ConfidenceMap | null | undefined, key: keyof
   return `${pct}%`;
 }
 
+function valueToShortString(value: unknown): string {
+  if (value == null) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) return value.map(String).join(", ");
+  return "";
+}
+
+function buildRevisionLine(update: DialogueUpdate | null | undefined): string | null {
+  if (!update) return null;
+
+  const priority: UserEditableSpecKey[] = [
+    "problem_count",
+    "language",
+    "topic_tags",
+    "problem_style",
+    "difficulty_plan",
+  ];
+
+  const key = priority.find((k) => update.changed[k] != null) ?? null;
+  if (!key) return null;
+
+  const change = update.changed[key];
+  if (!change) return null;
+
+  if (key === "problem_count" && typeof change.from === "number" && typeof change.to === "number") {
+    return `Got it — we’ll do ${change.to} problems instead of ${change.from}.`;
+  }
+  if (key === "language" && typeof change.from === "string" && typeof change.to === "string") {
+    return `Got it — we’ll use ${change.to.toUpperCase()} instead of ${change.from.toUpperCase()}.`;
+  }
+  if (key === "topic_tags" && Array.isArray(change.to)) {
+    return `Got it — we’ll focus on ${valueToShortString(change.to)}.`;
+  }
+  if (key === "problem_style" && typeof change.to === "string") {
+    return `Got it — we’ll use ${change.to} style.`;
+  }
+
+  return null;
+}
+
 export function generateNextPrompt(args: {
   spec: SpecDraft;
   readiness: ReadinessResult;
   confidence?: ConfidenceMap | null;
   lastUserMessage: string;
+  dialogueUpdate?: DialogueUpdate | null;
 }): string {
   const known = formatKnown(args.spec);
-  const preface = known ? `So far: ${known}.\n\n` : "";
+  const revisionLine = buildRevisionLine(args.dialogueUpdate);
+  const preface =
+    revisionLine || known ? `${[revisionLine, known ? `So far: ${known}.` : null].filter(Boolean).join("\n")}\n\n` : "";
 
   if (args.readiness.ready) {
     return preface + "Spec looks complete. You can generate the activity.";
@@ -61,9 +106,10 @@ export function generateNextPrompt(args: {
   if (missing.includes("difficulty_plan")) {
     const count = typeof args.spec.problem_count === "number" ? args.spec.problem_count : null;
     if (count) {
+      const countChanged = args.dialogueUpdate?.changed.problem_count != null;
       return (
         preface +
-        `What difficulty mix do you want for ${count} problems?\n` +
+        `${countChanged ? `Since the count changed, ` : ""}how should we split the difficulty for ${count} problems?\n` +
         `Example: easy:2, medium:2, hard:1`
       );
     }

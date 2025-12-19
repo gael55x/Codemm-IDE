@@ -7,6 +7,7 @@ import {
 } from "./referenceSolutionValidator";
 import { trace } from "../utils/trace";
 import { GenerationContractError, GenerationSlotFailureError, type GenerationFailureKind } from "./errors";
+import type { GenerationProgressEvent } from "../contracts/generationProgress";
 
 /**
  * Discard reference_solution from GeneratedProblemDraft to produce GeneratedProblem.
@@ -34,11 +35,16 @@ function discardReferenceArtifacts(draft: GeneratedProblemDraft): GeneratedProbl
  * Retry each slot up to 3 times on failure.
  * Throw if any slot fails after max retries.
  */
-export async function generateProblemsFromPlan(plan: ProblemPlan): Promise<GeneratedProblem[]> {
+export async function generateProblemsFromPlan(
+  plan: ProblemPlan,
+  opts?: { onProgress?: (event: GenerationProgressEvent) => void }
+): Promise<GeneratedProblem[]> {
   const problems: GeneratedProblem[] = [];
   const maxAttempts = 3;
+  const onProgress = opts?.onProgress;
 
   for (const slot of plan) {
+    onProgress?.({ type: "problem_started", index: slot.index, difficulty: slot.difficulty });
     trace("generation.slot.plan", {
       slotIndex: slot.index,
       difficulty: slot.difficulty,
@@ -66,6 +72,7 @@ export async function generateProblemsFromPlan(plan: ProblemPlan): Promise<Gener
       attempts++;
       try {
         trace("generation.attempt.start", { slotIndex: slot.index, attempts });
+        onProgress?.({ type: "attempt_started", index: slot.index, attempt: attempts });
         // Step 1: Generate single problem via LLM (includes reference_solution)
         const generated = await generateSingleProblem(slot, repair ? { repair } : undefined);
         const draft: GeneratedProblemDraft = generated.draft;
@@ -73,10 +80,12 @@ export async function generateProblemsFromPlan(plan: ProblemPlan): Promise<Gener
         lastLlmOutputHash = generated.meta.llmOutputHash;
 
         // Step 2: Validate reference_solution compiles and passes tests (Docker)
+        onProgress?.({ type: "validation_started", index: slot.index, attempt: attempts });
         await validateReferenceSolution(draft);
 
         // Step 3: Discard reference_solution (CRITICAL: do not persist)
         problem = discardReferenceArtifacts(draft);
+        onProgress?.({ type: "problem_validated", index: slot.index });
         trace("generation.attempt.success", { slotIndex: slot.index, attempts, title: draft.title });
       } catch (err: any) {
         lastError = err;
@@ -86,6 +95,7 @@ export async function generateProblemsFromPlan(plan: ProblemPlan): Promise<Gener
         );
 
         if (err instanceof GenerationContractError) {
+          onProgress?.({ type: "attempt_failed", index: slot.index, attempt: attempts, phase: "generate" });
           lastLlmOutputHash = err.llmOutputHash ?? lastLlmOutputHash;
           repair = {
             ...(typeof err.rawSnippet === "string" ? { previousRaw: err.rawSnippet } : {}),
@@ -94,6 +104,8 @@ export async function generateProblemsFromPlan(plan: ProblemPlan): Promise<Gener
         }
 
         if (err instanceof ReferenceSolutionValidationError && lastDraft) {
+          onProgress?.({ type: "validation_failed", index: slot.index, attempt: attempts });
+          onProgress?.({ type: "attempt_failed", index: slot.index, attempt: attempts, phase: "validate" });
           repair = {
             previousDraft: lastDraft,
             judgeStdout: err.judgeStdout,
@@ -103,11 +115,13 @@ export async function generateProblemsFromPlan(plan: ProblemPlan): Promise<Gener
           trace("generation.attempt.repair", { slotIndex: slot.index, attempts, exitCode: err.exitCode });
         } else {
           if (!(err instanceof GenerationContractError)) {
+            onProgress?.({ type: "attempt_failed", index: slot.index, attempt: attempts, phase: "generate" });
             repair = undefined;
           }
         }
 
         if (attempts >= maxAttempts) {
+          onProgress?.({ type: "problem_failed", index: slot.index });
           const kind: GenerationFailureKind =
             err instanceof ReferenceSolutionValidationError
               ? err.kind

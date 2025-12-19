@@ -54,6 +54,16 @@ declare const IntentResolutionSchema: z.ZodEffects<z.ZodObject<{
     }>;
     confidence: z.ZodRecord<z.ZodString, z.ZodNumber>;
     rationale: z.ZodString;
+    revision: z.ZodOptional<z.ZodObject<{
+        replaces: z.ZodOptional<z.ZodArray<z.ZodEnum<z.Writeable<any>>, "many">>;
+        invalidates: z.ZodOptional<z.ZodArray<z.ZodEnum<z.Writeable<any>>, "many">>;
+    }, "strict", z.ZodTypeAny, {
+        replaces?: any[] | undefined;
+        invalidates?: any[] | undefined;
+    }, {
+        replaces?: any[] | undefined;
+        invalidates?: any[] | undefined;
+    }>>;
     clarificationQuestion: z.ZodOptional<z.ZodString>;
 }, "strict", z.ZodTypeAny, {
     inferredPatch: {
@@ -68,6 +78,10 @@ declare const IntentResolutionSchema: z.ZodEffects<z.ZodObject<{
     };
     confidence: Record<string, number>;
     rationale: string;
+    revision?: {
+        replaces?: any[] | undefined;
+        invalidates?: any[] | undefined;
+    } | undefined;
     clarificationQuestion?: string | undefined;
 }, {
     inferredPatch: {
@@ -82,6 +96,10 @@ declare const IntentResolutionSchema: z.ZodEffects<z.ZodObject<{
     };
     confidence: Record<string, number>;
     rationale: string;
+    revision?: {
+        replaces?: any[] | undefined;
+        invalidates?: any[] | undefined;
+    } | undefined;
     clarificationQuestion?: string | undefined;
 }>, {
     inferredPatch: {
@@ -96,6 +114,10 @@ declare const IntentResolutionSchema: z.ZodEffects<z.ZodObject<{
     };
     confidence: Record<string, number>;
     rationale: string;
+    revision?: {
+        replaces?: any[] | undefined;
+        invalidates?: any[] | undefined;
+    } | undefined;
     clarificationQuestion?: string | undefined;
 }, {
     inferredPatch: {
@@ -110,6 +132,10 @@ declare const IntentResolutionSchema: z.ZodEffects<z.ZodObject<{
     };
     confidence: Record<string, number>;
     rationale: string;
+    revision?: {
+        replaces?: any[] | undefined;
+        invalidates?: any[] | undefined;
+    } | undefined;
     clarificationQuestion?: string | undefined;
 }>;
 export type IntentResolutionOutput = z.infer<typeof IntentResolutionSchema>;

@@ -24,6 +24,8 @@ const promptGenerator_1 = require("../agent/promptGenerator");
 const questionKey_1 = require("../agent/questionKey");
 const generationFallback_1 = require("../agent/generationFallback");
 const errors_1 = require("../generation/errors");
+const dialogue_1 = require("../agent/dialogue");
+const progressBus_1 = require("../generation/progressBus");
 function parseJsonObject(json) {
     if (!json)
         return {};
@@ -62,6 +64,42 @@ function mergeConfidence(existing, incoming) {
 function appendIntentTrace(existing, entry, maxEntries = 200) {
     const next = [...existing, entry];
     return next.length > maxEntries ? next.slice(next.length - maxEntries) : next;
+}
+function jsonStable(value) {
+    try {
+        return JSON.stringify(value);
+    }
+    catch {
+        return String(value);
+    }
+}
+function computeDialogueUpdate(args) {
+    const changed = {};
+    const added = [];
+    const removed = [];
+    for (const key of dialogue_1.USER_EDITABLE_SPEC_KEYS) {
+        const before = args.previous[key];
+        const after = args.next[key];
+        const beforeExists = before !== undefined;
+        const afterExists = after !== undefined;
+        if (beforeExists && !afterExists) {
+            removed.push(key);
+            continue;
+        }
+        if (!beforeExists && afterExists) {
+            added.push(key);
+            continue;
+        }
+        if (beforeExists && afterExists && jsonStable(before) !== jsonStable(after)) {
+            changed[key] = { from: before, to: after };
+        }
+    }
+    const outputInvalidates = args.output?.revision?.invalidates ?? [];
+    const invalidated = removed.filter((k) => outputInvalidates.includes(k));
+    const hasAny = Object.keys(changed).length > 0 || added.length > 0 || removed.length > 0 || invalidated.length > 0;
+    if (!hasAny)
+        return null;
+    return { changed, added, removed, invalidated };
 }
 function requireSession(id) {
     const session = database_1.sessionDb.findById(id);
@@ -195,6 +233,7 @@ async function processSessionMessage(sessionId, message) {
             });
             database_1.sessionDb.updateConfidenceJson(sessionId, JSON.stringify(nextConfidence));
             database_1.sessionDb.updateIntentTraceJson(sessionId, JSON.stringify(nextTrace));
+            existingTrace.splice(0, existingTrace.length, ...nextTrace);
             (0, trace_1.trace)("session.intent.persisted", {
                 sessionId,
                 confidenceKeys: Object.keys(nextConfidence),
@@ -234,11 +273,27 @@ async function processSessionMessage(sessionId, message) {
                 missing: readiness.gaps.missing,
             });
             const done = readiness.ready;
+            const dialogueUpdate = computeDialogueUpdate({
+                previous: specWithFixed,
+                next: resolved.merged,
+                output: resolved.output ?? null,
+            });
+            if (dialogueUpdate) {
+                const nextTrace = appendIntentTrace(existingTrace, {
+                    ts: new Date().toISOString(),
+                    type: "dialogue_revision",
+                    update: dialogueUpdate,
+                    patch: resolved.patch,
+                });
+                database_1.sessionDb.updateIntentTraceJson(sessionId, JSON.stringify(nextTrace));
+                existingTrace.splice(0, existingTrace.length, ...nextTrace);
+            }
             const nextQuestion = (0, promptGenerator_1.generateNextPrompt)({
                 spec: resolved.merged,
                 readiness,
                 confidence: effectiveConfidence,
                 lastUserMessage: combined,
+                dialogueUpdate,
             });
             database_1.sessionMessageDb.create(crypto_1.default.randomUUID(), sessionId, "assistant", nextQuestion);
             persistCollectorState(sessionId, {
@@ -398,9 +453,16 @@ async function generateFromSession(sessionId, userId) {
                 // Derive ProblemPlan (always from current spec)
                 const plan = (0, planner_1.deriveProblemPlan)(spec);
                 database_1.sessionDb.setPlanJson(sessionId, JSON.stringify(plan));
+                (0, progressBus_1.publishGenerationProgress)(sessionId, {
+                    type: "generation_started",
+                    totalProblems: plan.length,
+                    run: attempt + 1,
+                });
                 try {
                     // Generate problems (per-slot with retries + Docker validation + discard reference_solution)
-                    problems = await (0, generation_1.generateProblemsFromPlan)(plan);
+                    problems = await (0, generation_1.generateProblemsFromPlan)(plan, {
+                        onProgress: (event) => (0, progressBus_1.publishGenerationProgress)(sessionId, event),
+                    });
                 }
                 catch (err) {
                     if (err instanceof errors_1.GenerationSlotFailureError) {
@@ -465,6 +527,7 @@ async function generateFromSession(sessionId, userId) {
             // Transition to SAVED
             transitionOrThrow("GENERATING", "SAVED");
             database_1.sessionDb.updateState(sessionId, "SAVED");
+            (0, progressBus_1.publishGenerationProgress)(sessionId, { type: "generation_complete", activityId });
             if (usedFallback) {
                 persistTraceEvent({
                     ts: new Date().toISOString(),
@@ -483,6 +546,10 @@ async function generateFromSession(sessionId, userId) {
             catch (transitionErr) {
                 console.error("Failed to transition session to FAILED:", transitionErr);
             }
+            (0, progressBus_1.publishGenerationProgress)(sessionId, {
+                type: "generation_failed",
+                error: "Generation failed. Please try again.",
+            });
             throw err;
         }
     });

@@ -18,6 +18,9 @@ import { generateNextPrompt } from "../agent/promptGenerator";
 import { getDynamicQuestionKey } from "../agent/questionKey";
 import { proposeGenerationFallback } from "../agent/generationFallback";
 import { GenerationSlotFailureError } from "../generation/errors";
+import { type DialogueUpdate, USER_EDITABLE_SPEC_KEYS, type UserEditableSpecKey } from "../agent/dialogue";
+import { publishGenerationProgress } from "../generation/progressBus";
+import type { GenerationProgressEvent } from "../contracts/generationProgress";
 
 export type SessionRecord = {
   id: string;
@@ -71,6 +74,53 @@ function mergeConfidence(
 function appendIntentTrace(existing: unknown[], entry: unknown, maxEntries: number = 200): unknown[] {
   const next = [...existing, entry];
   return next.length > maxEntries ? next.slice(next.length - maxEntries) : next;
+}
+
+function jsonStable(value: unknown): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function computeDialogueUpdate(args: {
+  previous: SpecDraft;
+  next: SpecDraft;
+  output?: IntentResolutionOutput | null;
+}): DialogueUpdate | null {
+  const changed: DialogueUpdate["changed"] = {};
+  const added: UserEditableSpecKey[] = [];
+  const removed: UserEditableSpecKey[] = [];
+
+  for (const key of USER_EDITABLE_SPEC_KEYS) {
+    const before = (args.previous as any)[key] as unknown;
+    const after = (args.next as any)[key] as unknown;
+
+    const beforeExists = before !== undefined;
+    const afterExists = after !== undefined;
+
+    if (beforeExists && !afterExists) {
+      removed.push(key);
+      continue;
+    }
+    if (!beforeExists && afterExists) {
+      added.push(key);
+      continue;
+    }
+    if (beforeExists && afterExists && jsonStable(before) !== jsonStable(after)) {
+      changed[key] = { from: before, to: after };
+    }
+  }
+
+  const outputInvalidates = args.output?.revision?.invalidates ?? [];
+  const invalidated = removed.filter((k) => (outputInvalidates as string[]).includes(k));
+
+  const hasAny =
+    Object.keys(changed).length > 0 || added.length > 0 || removed.length > 0 || invalidated.length > 0;
+  if (!hasAny) return null;
+
+  return { changed, added, removed, invalidated };
 }
 
 function requireSession(id: string) {
@@ -247,6 +297,7 @@ export async function processSessionMessage(
     });
     sessionDb.updateConfidenceJson(sessionId, JSON.stringify(nextConfidence));
     sessionDb.updateIntentTraceJson(sessionId, JSON.stringify(nextTrace));
+    existingTrace.splice(0, existingTrace.length, ...nextTrace);
     trace("session.intent.persisted", {
       sessionId,
       confidenceKeys: Object.keys(nextConfidence),
@@ -293,11 +344,29 @@ export async function processSessionMessage(
     });
 
     const done = readiness.ready;
+    const dialogueUpdate = computeDialogueUpdate({
+      previous: specWithFixed as SpecDraft,
+      next: resolved.merged,
+      output: resolved.output ?? null,
+    });
+
+    if (dialogueUpdate) {
+      const nextTrace = appendIntentTrace(existingTrace, {
+        ts: new Date().toISOString(),
+        type: "dialogue_revision",
+        update: dialogueUpdate,
+        patch: resolved.patch,
+      });
+      sessionDb.updateIntentTraceJson(sessionId, JSON.stringify(nextTrace));
+      existingTrace.splice(0, existingTrace.length, ...nextTrace);
+    }
+
     const nextQuestion = generateNextPrompt({
       spec: resolved.merged,
       readiness,
       confidence: effectiveConfidence,
       lastUserMessage: combined,
+      dialogueUpdate,
     });
 
     sessionMessageDb.create(crypto.randomUUID(), sessionId, "assistant", nextQuestion);
@@ -483,10 +552,17 @@ export async function generateFromSession(
       // Derive ProblemPlan (always from current spec)
       const plan = deriveProblemPlan(spec);
       sessionDb.setPlanJson(sessionId, JSON.stringify(plan));
+      publishGenerationProgress(sessionId, {
+        type: "generation_started",
+        totalProblems: plan.length,
+        run: attempt + 1,
+      });
 
       try {
         // Generate problems (per-slot with retries + Docker validation + discard reference_solution)
-        problems = await generateProblemsFromPlan(plan);
+        problems = await generateProblemsFromPlan(plan, {
+          onProgress: (event: GenerationProgressEvent) => publishGenerationProgress(sessionId, event),
+        });
       } catch (err: any) {
         if (err instanceof GenerationSlotFailureError) {
           persistTraceEvent({
@@ -563,6 +639,7 @@ export async function generateFromSession(
     // Transition to SAVED
     transitionOrThrow("GENERATING", "SAVED");
     sessionDb.updateState(sessionId, "SAVED");
+    publishGenerationProgress(sessionId, { type: "generation_complete", activityId });
 
     if (usedFallback) {
       persistTraceEvent({
@@ -582,6 +659,10 @@ export async function generateFromSession(
       console.error("Failed to transition session to FAILED:", transitionErr);
     }
 
+      publishGenerationProgress(sessionId, {
+        type: "generation_failed",
+        error: "Generation failed. Please try again.",
+      });
       throw err;
     }
   });

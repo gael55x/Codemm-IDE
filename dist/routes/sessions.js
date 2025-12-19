@@ -6,6 +6,7 @@ const sessionService_1 = require("../services/sessionService");
 const auth_1 = require("../auth");
 const trace_1 = require("../utils/trace");
 const traceBus_1 = require("../utils/traceBus");
+const progressBus_1 = require("../generation/progressBus");
 exports.sessionsRouter = (0, express_1.Router)();
 function sanitizeTracePayload(payload) {
     const drop = new Set([
@@ -61,6 +62,55 @@ exports.sessionsRouter.get("/:id/trace", (req, res) => {
     res.write(`data: ${JSON.stringify({ ts: new Date().toISOString(), event: "trace.ready", sessionId: id })}\n\n`);
     const unsubscribe = (0, traceBus_1.subscribeTrace)(id, (payload) => {
         res.write(`data: ${JSON.stringify(sanitizeTracePayload(payload))}\n\n`);
+    });
+    const heartbeat = setInterval(() => {
+        res.write(`: ping ${Date.now()}\n\n`);
+    }, 15000);
+    req.on("close", () => {
+        clearInterval(heartbeat);
+        unsubscribe();
+    });
+});
+// Server-sent events stream for structured generation progress (no prompts, no reasoning).
+exports.sessionsRouter.get("/:id/generate/stream", (req, res) => {
+    const id = req.params.id;
+    try {
+        // Ensure session exists.
+        (0, sessionService_1.getSession)(id);
+    }
+    catch (err) {
+        const status = typeof err?.status === "number" ? err.status : 500;
+        return res.status(status).json({ error: status === 404 ? "Session not found." : "Failed to open progress stream." });
+    }
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    // Initial event
+    res.write(`event: ready\n`);
+    res.write(`data: ${JSON.stringify({ ts: new Date().toISOString(), event: "progress.ready", sessionId: id })}\n\n`);
+    // Replay buffered events (covers the "stream opened late" case).
+    const buffered = (0, progressBus_1.getGenerationProgressBuffer)(id);
+    for (const ev of buffered) {
+        res.write(`data: ${JSON.stringify(ev)}\n\n`);
+    }
+    const unsubscribe = (0, progressBus_1.subscribeGenerationProgress)(id, (ev) => {
+        try {
+            res.write(`data: ${JSON.stringify(ev)}\n\n`);
+            if (ev.type === "generation_complete" || ev.type === "generation_failed") {
+                // Allow a final flush before closing.
+                setTimeout(() => {
+                    try {
+                        res.end();
+                    }
+                    catch {
+                        // ignore
+                    }
+                }, 50);
+            }
+        }
+        catch {
+            // ignore write errors (client disconnected)
+        }
     });
     const heartbeat = setInterval(() => {
         res.write(`: ping ${Date.now()}\n\n`);

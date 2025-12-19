@@ -1,5 +1,6 @@
 import type { ProblemPlan } from "../planner/types";
 import type { GeneratedProblem } from "../contracts/problem";
+import type { GenerationProgressEvent } from "../contracts/generationProgress";
 /**
  * Generate problems from a ProblemPlan using per-slot generation with isolated retries.
  *
@@ -12,5 +13,7 @@ import type { GeneratedProblem } from "../contracts/problem";
  * Retry each slot up to 3 times on failure.
  * Throw if any slot fails after max retries.
  */
-export declare function generateProblemsFromPlan(plan: ProblemPlan): Promise<GeneratedProblem[]>;
+export declare function generateProblemsFromPlan(plan: ProblemPlan, opts?: {
+    onProgress?: (event: GenerationProgressEvent) => void;
+}): Promise<GeneratedProblem[]>;
 //# sourceMappingURL=index.d.ts.map

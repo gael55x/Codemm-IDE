@@ -30,10 +30,12 @@ function discardReferenceArtifacts(draft) {
  * Retry each slot up to 3 times on failure.
  * Throw if any slot fails after max retries.
  */
-async function generateProblemsFromPlan(plan) {
+async function generateProblemsFromPlan(plan, opts) {
     const problems = [];
     const maxAttempts = 3;
+    const onProgress = opts?.onProgress;
     for (const slot of plan) {
+        onProgress?.({ type: "problem_started", index: slot.index, difficulty: slot.difficulty });
         (0, trace_1.trace)("generation.slot.plan", {
             slotIndex: slot.index,
             difficulty: slot.difficulty,
@@ -51,21 +53,25 @@ async function generateProblemsFromPlan(plan) {
             attempts++;
             try {
                 (0, trace_1.trace)("generation.attempt.start", { slotIndex: slot.index, attempts });
+                onProgress?.({ type: "attempt_started", index: slot.index, attempt: attempts });
                 // Step 1: Generate single problem via LLM (includes reference_solution)
                 const generated = await (0, perSlotGenerator_1.generateSingleProblem)(slot, repair ? { repair } : undefined);
                 const draft = generated.draft;
                 lastDraft = draft;
                 lastLlmOutputHash = generated.meta.llmOutputHash;
                 // Step 2: Validate reference_solution compiles and passes tests (Docker)
+                onProgress?.({ type: "validation_started", index: slot.index, attempt: attempts });
                 await (0, referenceSolutionValidator_1.validateReferenceSolution)(draft);
                 // Step 3: Discard reference_solution (CRITICAL: do not persist)
                 problem = discardReferenceArtifacts(draft);
+                onProgress?.({ type: "problem_validated", index: slot.index });
                 (0, trace_1.trace)("generation.attempt.success", { slotIndex: slot.index, attempts, title: draft.title });
             }
             catch (err) {
                 lastError = err;
                 console.warn(`Slot ${slot.index} generation attempt ${attempts}/${maxAttempts} failed:`, err.message);
                 if (err instanceof errors_1.GenerationContractError) {
+                    onProgress?.({ type: "attempt_failed", index: slot.index, attempt: attempts, phase: "generate" });
                     lastLlmOutputHash = err.llmOutputHash ?? lastLlmOutputHash;
                     repair = {
                         ...(typeof err.rawSnippet === "string" ? { previousRaw: err.rawSnippet } : {}),
@@ -73,6 +79,8 @@ async function generateProblemsFromPlan(plan) {
                     };
                 }
                 if (err instanceof referenceSolutionValidator_1.ReferenceSolutionValidationError && lastDraft) {
+                    onProgress?.({ type: "validation_failed", index: slot.index, attempt: attempts });
+                    onProgress?.({ type: "attempt_failed", index: slot.index, attempt: attempts, phase: "validate" });
                     repair = {
                         previousDraft: lastDraft,
                         judgeStdout: err.judgeStdout,
@@ -83,10 +91,12 @@ async function generateProblemsFromPlan(plan) {
                 }
                 else {
                     if (!(err instanceof errors_1.GenerationContractError)) {
+                        onProgress?.({ type: "attempt_failed", index: slot.index, attempt: attempts, phase: "generate" });
                         repair = undefined;
                     }
                 }
                 if (attempts >= maxAttempts) {
+                    onProgress?.({ type: "problem_failed", index: slot.index });
                     const kind = err instanceof referenceSolutionValidator_1.ReferenceSolutionValidationError
                         ? err.kind
                         : err instanceof errors_1.GenerationContractError
