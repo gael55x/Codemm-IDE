@@ -7,6 +7,7 @@ export type BackendSpecResponse = {
   accepted: boolean;
   error?: string;
   nextQuestion?: string;
+  questionKey?: string | null;
   done: boolean;
   state?: string;
 };
@@ -37,6 +38,30 @@ function deriveSlotKeyFromQuestion(question?: string | null): SpecSlot["key"] | 
   if (tail.includes("checked") || tail.includes("stdout") || tail.includes("return") || tail.includes("mixed"))
     return "problem_style";
   if (tail.includes("constraints") || tail.includes("java/junit setup")) return "constraints";
+  return null;
+}
+
+function deriveSlotKeyFromQuestionKey(key?: string | null): SpecSlot["key"] | null {
+  const k = (key ?? "").trim().toLowerCase();
+  if (!k) return null;
+  if (k === "ready") return null;
+  if (k.startsWith("invalid:")) return (k.slice("invalid:".length) as any) ?? null;
+  if (k.startsWith("confirm:")) {
+    const first = k
+      .slice("confirm:".length)
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)[0];
+    return (first as any) ?? null;
+  }
+  if (k.startsWith("goal:")) {
+    const goal = k.slice("goal:".length);
+    if (goal === "content") return "topic_tags";
+    if (goal === "scope") return "problem_count";
+    if (goal === "difficulty") return "difficulty_plan";
+    if (goal === "checking") return "problem_style";
+    if (goal === "language") return "language";
+  }
   return null;
 }
 
@@ -81,8 +106,8 @@ function humanizeSpecError(err: string, slot?: SpecSlot | null): { friendly: str
 
   if (slot?.key === "language") {
     return {
-      friendly: "We're set up for Java right now.",
-      hints: ["Reply with 'java' to continue."],
+      friendly: "Pick a supported language.",
+      hints: ["Reply with 'java' or 'python'."],
     };
   }
 
@@ -94,9 +119,9 @@ function humanizeSpecError(err: string, slot?: SpecSlot | null): { friendly: str
 
 const SPEC_SLOTS: SpecSlot[] = [
   {
-    key: "language",
-    intent: "What language do you want to use? (Java is available today.)",
-    examples: ["Java"],
+    key: "topic_tags",
+    intent: "What should the problems focus on?",
+    examples: ["encapsulation, inheritance, polymorphism"],
   },
   {
     key: "problem_count",
@@ -109,14 +134,14 @@ const SPEC_SLOTS: SpecSlot[] = [
     examples: ["easy:2, medium:2, hard:1", "2 easy, 2 medium, 1 hard"],
   },
   {
-    key: "topic_tags",
-    intent: "What topics should we cover? Share a few tags.",
-    examples: ["encapsulation, inheritance, polymorphism"],
-  },
-  {
     key: "problem_style",
     intent: "How should solutions be checked? (stdout, return, or mixed)",
     examples: ["stdout", "return"],
+  },
+  {
+    key: "language",
+    intent: "Which language should we use?",
+    examples: ["java", "python"],
   },
   {
     key: "constraints",
@@ -126,7 +151,7 @@ const SPEC_SLOTS: SpecSlot[] = [
 ];
 
 export function useSpecBuilderUX() {
-  const [activeSlotKey, setActiveSlotKey] = useState<SpecSlot["key"] | null>("language");
+  const [activeSlotKey, setActiveSlotKey] = useState<SpecSlot["key"] | null>("topic_tags");
 
   const activeSlot = useMemo(
     () => SPEC_SLOTS.find((s) => s.key === activeSlotKey) ?? SPEC_SLOTS[0],
@@ -161,7 +186,10 @@ export function useSpecBuilderUX() {
 
   const interpretResponse = useCallback(
     (payload: BackendSpecResponse): SpecInteractionResult => {
-      const derivedKey = deriveSlotKeyFromQuestion(payload.nextQuestion) ?? activeSlotKey;
+      const derivedKey =
+        deriveSlotKeyFromQuestionKey(payload.questionKey) ??
+        deriveSlotKeyFromQuestion(payload.nextQuestion) ??
+        activeSlotKey;
       const derivedSlot = derivedKey
         ? SPEC_SLOTS.find((s) => s.key === derivedKey) ?? activeSlot
         : activeSlot;
