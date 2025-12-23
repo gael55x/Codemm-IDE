@@ -107,7 +107,7 @@ function humanizeSpecError(err: string, slot?: SpecSlot | null): { friendly: str
   if (slot?.key === "language") {
     return {
       friendly: "Pick a supported language.",
-      hints: ["Reply with 'java', 'python', or 'cpp'."],
+      hints: ["Reply with 'java', 'python', 'cpp', or 'sql'."],
     };
   }
 
@@ -141,7 +141,7 @@ const SPEC_SLOTS: SpecSlot[] = [
   {
     key: "language",
     intent: "Which language should we use?",
-    examples: ["java", "python", "cpp"],
+    examples: ["java", "python", "cpp", "sql"],
   },
   {
     key: "constraints",

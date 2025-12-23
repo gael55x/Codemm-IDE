@@ -75,6 +75,7 @@ const BACKEND_URL =
 function getProblemLanguage(p: Problem | null | undefined): LanguageId {
   if (p?.language === "python") return "python";
   if (p?.language === "cpp") return "cpp";
+  if (p?.language === "sql") return "sql";
   return "java";
 }
 
@@ -194,6 +195,8 @@ export default function ActivityPage() {
         ? "def solve(x):\n    # TODO: implement\n    raise NotImplementedError\n"
         : lang === "cpp"
         ? "#include <bits/stdc++.h>\n\n// Implement solve(...) below.\nauto solve(auto x) { (void)x; return 0; }\n"
+        : lang === "sql"
+        ? "-- Write a single SELECT query.\nSELECT 1;\n"
         : "public class Solution {\n}\n");
 
     if (problem.workspace && Array.isArray(problem.workspace.files) && problem.workspace.files.length > 0) {
@@ -239,6 +242,18 @@ export default function ActivityPage() {
       });
       setEntrypointClass("main.cpp");
       setActiveFilename("solution.cpp");
+      return;
+    }
+
+    if (lang === "sql") {
+      setFiles({
+        "solution.sql": starterCode,
+      });
+      setFileRoles({
+        "solution.sql": "support",
+      });
+      setEntrypointClass("solution.sql");
+      setActiveFilename("solution.sql");
       return;
     }
 
@@ -323,6 +338,8 @@ export default function ActivityPage() {
       ? "main.py"
       : selectedLanguage === "cpp"
       ? "main.cpp"
+      : selectedLanguage === "sql"
+      ? "solution.sql"
       : Object.entries(fileRoles).find(([, role]) => role === "entry")?.[0] ?? "Main.java";
   const entrySource = files[entryFile] ?? "";
   const canRunMain =
@@ -330,6 +347,8 @@ export default function ActivityPage() {
       ? true
       : selectedLanguage === "cpp"
       ? hasCppMainMethod(entrySource)
+      : selectedLanguage === "sql"
+      ? false
       : hasJavaMainMethod(entrySource);
   const isActiveReadonly = fileRoles[activeFilename] === "readonly";
 
@@ -350,6 +369,13 @@ export default function ActivityPage() {
 
   async function handleRun() {
     if (!selectedProblem) return;
+    if (selectedLanguage === "sql") {
+      setResult({
+        stdout: "",
+        stderr: 'SQL activities are graded via "Run tests".',
+      });
+      return;
+    }
     if (!canRunMain && selectedLanguage !== "python") {
       const mainSig =
         selectedLanguage === "cpp"
@@ -723,10 +749,18 @@ export default function ActivityPage() {
 			              <div className="flex gap-2">
 			                <button
 			                  onClick={handleRun}
-			                  disabled={!selectedProblem || running || submitting || (!canRunMain && selectedLanguage !== "python")}
+			                  disabled={
+                          !selectedProblem ||
+                          running ||
+                          submitting ||
+                          selectedLanguage === "sql" ||
+                          (!canRunMain && selectedLanguage !== "python")
+                        }
 			                  title={
 			                    selectedLanguage === "python"
 			                      ? "Runs main.py (harness) and prints solve(...)"
+			                      : selectedLanguage === "sql"
+			                        ? "SQL uses Run tests"
 			                      : canRunMain
 			                        ? `Runs ${entryFile}`
 			                        : selectedLanguage === "cpp"
