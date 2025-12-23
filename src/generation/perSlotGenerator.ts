@@ -164,10 +164,63 @@ Goal:
 Return ONLY valid JSON. No markdown. No code fences. No prose.`;
 }
 
+function buildCppRepairPrompt(slot: ProblemSlot, repair: RepairContext, ctx?: SlotPromptContext): string {
+  const previousJson =
+    repair.previousDraft != null ? JSON.stringify(repair.previousDraft, null, 2) : null;
+  const stdoutSnippet = (repair.judgeStdout ?? "").slice(0, 1600);
+  const stderrSnippet = (repair.judgeStderr ?? "").slice(0, 1600);
+  const rawSnippet = (repair.previousRaw ?? "").slice(0, 2400);
+  const errorMessage = (repair.errorMessage ?? "").slice(0, 600);
+
+  return `You previously generated a problem JSON for this slot, but the reference_solution FAILED when executed against the test_suite in Docker/g++.
+
+Slot requirements:
+- Difficulty: ${slot.difficulty}
+- Topics: ${slot.topics.join(", ")}
+- Problem style: ${slot.problem_style}
+- Constraints: ${slot.constraints}
+- C++20 (g++)
+- test_suite must include exactly 8 RUN_TEST("test_case_1".. "test_case_8", ...) tests
+
+${ctx?.domain ? `\nScenario seed: ${ctx.domain}\n` : ""}
+${ctx?.avoidDomains?.length ? `Avoid repeating domains: ${ctx.avoidDomains.join(", ")}\n` : ""}
+${ctx?.avoidTitles?.length ? `Avoid reusing titles too similar to: ${ctx.avoidTitles.join(" | ")}\n` : ""}
+
+Failure output:
+STDOUT:
+${stdoutSnippet || "(empty)"}
+
+STDERR:
+${stderrSnippet || "(empty)"}
+
+Error reason:
+${errorMessage || "(not provided)"}
+
+Hard structure rules (do not violate):
+- starter_code and reference_solution must define solve(...) (no main())
+- test_suite must #include "solution.cpp" and define main()
+- Keep exactly 8 tests: test_case_1..test_case_8 using RUN_TEST("test_case_N", { ... })
+- Tests must be deterministic and assert solve(...) == expected
+- Tests must print one line per test: [PASS] test_case_N or [FAIL] test_case_N
+
+Here is your previous output (may be truncated):
+${rawSnippet || "(not provided)"}
+
+Here is your previous JSON (preferred to edit if present):
+${previousJson || "(not provided)"}
+
+Goal:
+- Return corrected JSON with the exact same fields.
+- Prefer keeping id/title/description/starter_code stable.
+- You MAY update test_suite and/or reference_solution, but the final pair MUST pass in Docker/g++.
+
+Return ONLY valid JSON. No markdown. No code fences. No prose.`;
+}
+
 function buildRepairPrompt(slot: ProblemSlot, repair: RepairContext, ctx?: SlotPromptContext): string {
-  return slot.language === "python"
-    ? buildPythonRepairPrompt(slot, repair, ctx)
-    : buildJavaRepairPrompt(slot, repair, ctx);
+  if (slot.language === "python") return buildPythonRepairPrompt(slot, repair, ctx);
+  if (slot.language === "cpp") return buildCppRepairPrompt(slot, repair, ctx);
+  return buildJavaRepairPrompt(slot, repair, ctx);
 }
 
 /**
@@ -293,6 +346,88 @@ export async function generateSingleProblem(
       }
 
       trace("generation.draft.meta", { slotIndex: slot.index, title, language: "python", difficulty, topicTag });
+      return { draft: result.data, meta: { llmOutputHash } };
+    }
+
+    if (slot.language === "cpp") {
+      if (raw.workspace || raw.reference_workspace) {
+        throw new Error("C++ generation does not support workspace problems yet.");
+      }
+
+      const baseId =
+        typeof raw.id === "string" && raw.id.trim() ? raw.id.trim() : crypto.randomUUID();
+
+      const title =
+        typeof raw.title === "string" && raw.title.trim()
+          ? raw.title.trim()
+          : `Problem for ${slot.topics[0] ?? "C++"}`;
+
+      const description =
+        typeof raw.description === "string" && raw.description.trim()
+          ? raw.description.trim()
+          : `Problem description for ${title}.`;
+
+      let starterCode =
+        typeof raw.starter_code === "string" && raw.starter_code.trim() ? raw.starter_code.trim() : "";
+      if (!starterCode.trim()) {
+        starterCode =
+          '#include <bits/stdc++.h>\\n\\n// Implement solve(...) below.\\n// Avoid I/O in solve().\\nauto solve(auto x) { (void)x; return 0; }\\n';
+      }
+
+      const testSuite =
+        typeof raw.test_suite === "string" && raw.test_suite.trim() ? raw.test_suite.trim() : "";
+      if (!testSuite.trim()) {
+        throw new Error(`Invalid test_suite for slot ${slot.index}: missing.`);
+      }
+
+      const referenceSolution =
+        typeof raw.reference_solution === "string" && raw.reference_solution.trim()
+          ? raw.reference_solution.trim()
+          : "";
+      if (!referenceSolution.trim()) {
+        throw new Error(`Missing reference_solution for slot ${slot.index}.`);
+      }
+
+      const constraints =
+        typeof raw.constraints === "string" && raw.constraints.trim()
+          ? raw.constraints.trim()
+          : slot.constraints;
+
+      const sampleInputs = Array.isArray(raw.sample_inputs)
+        ? (raw.sample_inputs as string[])
+        : [];
+
+      const sampleOutputs = Array.isArray(raw.sample_outputs)
+        ? (raw.sample_outputs as string[])
+        : [];
+
+      const difficulty = slot.difficulty;
+      const topicTag = slot.topics[0] ?? "oop";
+
+      const draft: GeneratedProblemDraft = {
+        language: "cpp",
+        id: baseId,
+        title,
+        description,
+        starter_code: starterCode,
+        test_suite: testSuite,
+        reference_solution: referenceSolution,
+        constraints,
+        sample_inputs: sampleInputs,
+        sample_outputs: sampleOutputs,
+        difficulty,
+        topic_tag: topicTag,
+      };
+
+      const result = GeneratedProblemDraftSchema.safeParse(draft);
+      if (!result.success) {
+        const firstError = result.error.issues[0];
+        throw new Error(
+          `Generated problem for slot ${slot.index} failed schema validation: ${firstError?.message ?? "unknown error"}`
+        );
+      }
+
+      trace("generation.draft.meta", { slotIndex: slot.index, title, language: "cpp", difficulty, topicTag });
       return { draft: result.data, meta: { llmOutputHash } };
     }
 
