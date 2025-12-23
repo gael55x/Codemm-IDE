@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { JavaSourceNoPackageSchema, isValidJUnit5TestSuite } from "./javaRules";
 import { PythonSourceSchema, isValidPytestTestSuite } from "./pythonRules";
+import { CppSourceSchema, isValidCppTestSuite } from "./cppRules";
 
 function stripJavaComments(source: string): string {
   const withoutBlockComments = source.replace(/\/\*[\s\S]*?\*\//g, "");
@@ -35,7 +36,7 @@ function testSuiteReferencesClass(testSuite: string, className: string): boolean
  */
 const CommonProblemFieldsSchema = z
   .object({
-    language: z.enum(["java", "python"]),
+    language: z.enum(["java", "python", "cpp"]),
     id: z.string().trim().min(1).max(80),
     title: z.string().trim().min(1).max(120),
     description: z.string().trim().min(1).max(8000),
@@ -73,6 +74,19 @@ const PythonTestSuiteSchema = z
         code: z.ZodIssueCode.custom,
         message:
           "Invalid test_suite: must use pytest, import solve from solution, define exactly 8 tests named test_case_1..test_case_8, avoid IO/randomness, and assert solve(...) == expected.",
+      });
+    }
+  });
+
+const CppTestSuiteSchema = z
+  .string()
+  .min(1)
+  .superRefine((ts, ctx) => {
+    if (!isValidCppTestSuite(ts, 8)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          'Invalid test_suite: must #include "solution.cpp", define a main(), and include exactly 8 RUN_TEST("test_case_1".."test_case_8", ...) tests with deterministic assertions.',
       });
     }
   });
@@ -195,7 +209,19 @@ const PythonDraftSchema = CommonProblemFieldsSchema.extend({
   reference_solution: PythonSourceSchema,
 }).strict();
 
-export const GeneratedProblemDraftSchema = z.union([LegacyDraftSchema, WorkspaceDraftSchema, PythonDraftSchema]);
+const CppDraftSchema = CommonProblemFieldsSchema.extend({
+  language: z.literal("cpp"),
+  test_suite: CppTestSuiteSchema,
+  starter_code: CppSourceSchema,
+  reference_solution: CppSourceSchema,
+}).strict();
+
+export const GeneratedProblemDraftSchema = z.union([
+  LegacyDraftSchema,
+  WorkspaceDraftSchema,
+  PythonDraftSchema,
+  CppDraftSchema,
+]);
 
 export type GeneratedProblemDraft = z.infer<typeof GeneratedProblemDraftSchema>;
 
@@ -206,6 +232,7 @@ export const GeneratedProblemSchema = z.union([
   LegacyDraftSchema.omit({ reference_solution: true }),
   WorkspaceDraftSchemaBase.omit({ reference_workspace: true }).superRefine(refineWorkspaceProblem),
   PythonDraftSchema.omit({ reference_solution: true }),
+  CppDraftSchema.omit({ reference_solution: true }),
 ]);
 
 export type GeneratedProblem = z.infer<typeof GeneratedProblemSchema>;

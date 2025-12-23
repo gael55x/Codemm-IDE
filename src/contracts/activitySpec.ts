@@ -9,9 +9,10 @@ export const CODEMM_DEFAULT_CONSTRAINTS_BY_LANGUAGE = {
   java: CODEMM_DEFAULT_CONSTRAINTS,
   python:
     "Python 3.11, pytest, standard library only, no filesystem access, no networking, time limit enforced." as const,
+  cpp: "C++20, g++ (GNU), standard library only, no filesystem access, no networking, deterministic behavior." as const,
 } as const;
 
-export const ActivityLanguageSchema = z.enum(["java", "python"]);
+export const ActivityLanguageSchema = z.enum(["java", "python", "cpp"]);
 export type ActivityLanguage = z.infer<typeof ActivityLanguageSchema>;
 
 export const DifficultySchema = z.enum(["easy", "medium", "hard"]);

@@ -344,6 +344,46 @@ export declare const GeneratedProblemDraftSchema: z.ZodUnion<[z.ZodObject<{
     test_suite: string;
     starter_code: string;
     reference_solution: string;
+}>, z.ZodObject<{
+    id: z.ZodString;
+    title: z.ZodString;
+    description: z.ZodString;
+    constraints: z.ZodString;
+    sample_inputs: z.ZodArray<z.ZodString, "many">;
+    sample_outputs: z.ZodArray<z.ZodString, "many">;
+    difficulty: z.ZodEnum<["easy", "medium", "hard"]>;
+    topic_tag: z.ZodString;
+} & {
+    language: z.ZodLiteral<"cpp">;
+    test_suite: z.ZodEffects<z.ZodString, string, string>;
+    starter_code: z.ZodEffects<z.ZodString, string, string>;
+    reference_solution: z.ZodEffects<z.ZodString, string, string>;
+}, "strict", z.ZodTypeAny, {
+    id: string;
+    difficulty: "easy" | "medium" | "hard";
+    language: "cpp";
+    constraints: string;
+    title: string;
+    description: string;
+    sample_inputs: string[];
+    sample_outputs: string[];
+    topic_tag: string;
+    test_suite: string;
+    starter_code: string;
+    reference_solution: string;
+}, {
+    id: string;
+    difficulty: "easy" | "medium" | "hard";
+    language: "cpp";
+    constraints: string;
+    title: string;
+    description: string;
+    sample_inputs: string[];
+    sample_outputs: string[];
+    topic_tag: string;
+    test_suite: string;
+    starter_code: string;
+    reference_solution: string;
 }>]>;
 export type GeneratedProblemDraft = z.infer<typeof GeneratedProblemDraftSchema>;
 /**
@@ -593,6 +633,44 @@ export declare const GeneratedProblemSchema: z.ZodUnion<[z.ZodObject<Omit<{
     id: string;
     difficulty: "easy" | "medium" | "hard";
     language: "python";
+    constraints: string;
+    title: string;
+    description: string;
+    sample_inputs: string[];
+    sample_outputs: string[];
+    topic_tag: string;
+    test_suite: string;
+    starter_code: string;
+}>, z.ZodObject<Omit<{
+    id: z.ZodString;
+    title: z.ZodString;
+    description: z.ZodString;
+    constraints: z.ZodString;
+    sample_inputs: z.ZodArray<z.ZodString, "many">;
+    sample_outputs: z.ZodArray<z.ZodString, "many">;
+    difficulty: z.ZodEnum<["easy", "medium", "hard"]>;
+    topic_tag: z.ZodString;
+} & {
+    language: z.ZodLiteral<"cpp">;
+    test_suite: z.ZodEffects<z.ZodString, string, string>;
+    starter_code: z.ZodEffects<z.ZodString, string, string>;
+    reference_solution: z.ZodEffects<z.ZodString, string, string>;
+}, "reference_solution">, "strict", z.ZodTypeAny, {
+    id: string;
+    difficulty: "easy" | "medium" | "hard";
+    language: "cpp";
+    constraints: string;
+    title: string;
+    description: string;
+    sample_inputs: string[];
+    sample_outputs: string[];
+    topic_tag: string;
+    test_suite: string;
+    starter_code: string;
+}, {
+    id: string;
+    difficulty: "easy" | "medium" | "hard";
+    language: "cpp";
     constraints: string;
     title: string;
     description: string;

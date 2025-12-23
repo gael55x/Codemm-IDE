@@ -10,7 +10,7 @@ export type SpecDraft = Partial<ActivitySpec> & {
  */
 export declare const ActivitySpecDraftSchema: z.ZodEffects<z.ZodObject<{
     version: z.ZodOptional<z.ZodLiteral<"1.0">>;
-    language: z.ZodOptional<z.ZodEnum<["java", "python"]>>;
+    language: z.ZodOptional<z.ZodEnum<["java", "python", "cpp"]>>;
     problem_count: z.ZodOptional<z.ZodNumber>;
     difficulty_plan: z.ZodOptional<z.ZodEffects<z.ZodArray<z.ZodObject<{
         difficulty: z.ZodEnum<["easy", "medium", "hard"]>;
@@ -34,7 +34,7 @@ export declare const ActivitySpecDraftSchema: z.ZodEffects<z.ZodObject<{
     test_case_count: z.ZodOptional<z.ZodLiteral<8>>;
 }, "strict", z.ZodTypeAny, {
     version?: "1.0" | undefined;
-    language?: "java" | "python" | undefined;
+    language?: "java" | "python" | "cpp" | undefined;
     problem_count?: number | undefined;
     difficulty_plan?: {
         difficulty: "easy" | "medium" | "hard";
@@ -46,7 +46,7 @@ export declare const ActivitySpecDraftSchema: z.ZodEffects<z.ZodObject<{
     test_case_count?: 8 | undefined;
 }, {
     version?: "1.0" | undefined;
-    language?: "java" | "python" | undefined;
+    language?: "java" | "python" | "cpp" | undefined;
     problem_count?: number | undefined;
     difficulty_plan?: {
         difficulty: "easy" | "medium" | "hard";
@@ -58,7 +58,7 @@ export declare const ActivitySpecDraftSchema: z.ZodEffects<z.ZodObject<{
     test_case_count?: 8 | undefined;
 }>, {
     version?: "1.0" | undefined;
-    language?: "java" | "python" | undefined;
+    language?: "java" | "python" | "cpp" | undefined;
     problem_count?: number | undefined;
     difficulty_plan?: {
         difficulty: "easy" | "medium" | "hard";
@@ -70,7 +70,7 @@ export declare const ActivitySpecDraftSchema: z.ZodEffects<z.ZodObject<{
     test_case_count?: 8 | undefined;
 }, {
     version?: "1.0" | undefined;
-    language?: "java" | "python" | undefined;
+    language?: "java" | "python" | "cpp" | undefined;
     problem_count?: number | undefined;
     difficulty_plan?: {
         difficulty: "easy" | "medium" | "hard";

@@ -10,6 +10,7 @@ const activitySpec_1 = require("../contracts/activitySpec");
 const javaPrompts_1 = require("./javaPrompts");
 const javaAdapters_1 = require("./javaAdapters");
 const pythonProfile_1 = require("./pythonProfile");
+const cppProfile_1 = require("./cppProfile");
 exports.LANGUAGE_PROFILES = {
     java: {
         language: "java",
@@ -28,6 +29,7 @@ exports.LANGUAGE_PROFILES = {
         },
     },
     python: pythonProfile_1.PYTHON_LANGUAGE_PROFILE,
+    cpp: cppProfile_1.CPP_LANGUAGE_PROFILE,
 };
 function listAgentSelectableLanguages() {
     // What we allow the agent to select without additional product work.

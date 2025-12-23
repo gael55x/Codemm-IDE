@@ -87,8 +87,9 @@ function wantsTopicDominance(userMessage: string): boolean {
   );
 }
 
-function extractExplicitLanguage(userMessage: string): "java" | "python" | null {
+function extractExplicitLanguage(userMessage: string): "java" | "python" | "cpp" | null {
   const msg = userMessage.toLowerCase();
+  if (/\bc\+\+\b/.test(msg) || /\bcpp\b/.test(msg)) return "cpp";
   if (/\bpython\b/.test(msg)) return "python";
   if (/\bjava\b/.test(msg)) return "java";
   return null;
@@ -96,10 +97,10 @@ function extractExplicitLanguage(userMessage: string): "java" | "python" | null 
 
 function isLanguageSwitchConfirmed(userMessage: string): boolean {
   const msg = userMessage.trim().toLowerCase();
-  if (msg === "python" || msg === "java") return true;
+  if (msg === "python" || msg === "java" || msg === "cpp" || msg === "c++") return true;
   // Require both a confirmation-ish phrase and an explicit language mention.
   const hasConfirmWord = /\b(yes|yep|sure|ok|okay|confirm|proceed|switch|change|use|go with)\b/.test(msg);
-  const hasLanguage = /\b(python|java)\b/.test(msg);
+  const hasLanguage = /\b(python|java|cpp)\b/.test(msg) || /\bc\+\+\b/.test(msg);
   return hasConfirmWord && hasLanguage;
 }
 
@@ -223,7 +224,7 @@ ${JSON.stringify(locked)}
 Output JSON schema:
 {
   "inferredPatch": {
-    "language"?: "java" | "python",
+    "language"?: "java" | "python" | "cpp",
     "problem_count"?: number,
     "difficulty_plan"?: [{"difficulty":"easy|medium|hard","count":number}, ...],
     "topic_tags"?: string[],
@@ -410,7 +411,7 @@ export async function resolveIntentWithLLM(args: {
   const currentLanguage = args.currentSpec.language;
   const effectiveCurrentLanguage = currentLanguage ?? "java";
 
-  const applyLanguagePatch = (language: "java" | "python", rationale: string): IntentResolutionResult => {
+  const applyLanguagePatch = (language: "java" | "python" | "cpp", rationale: string): IntentResolutionResult => {
     const output: IntentResolutionOutput = {
       inferredPatch: { language },
       confidence: { language: 1 },

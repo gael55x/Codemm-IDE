@@ -1,6 +1,6 @@
 import type { ProblemSlot } from "../planner/types";
 import type { JudgeResult } from "../types";
-export type LanguageId = "java" | "python";
+export type LanguageId = "java" | "python" | "cpp";
 export type ExecutionResult = {
     stdout: string;
     stderr: string;

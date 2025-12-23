@@ -4,6 +4,7 @@ exports.GeneratedProblemSchema = exports.GeneratedProblemDraftSchema = exports.W
 const zod_1 = require("zod");
 const javaRules_1 = require("./javaRules");
 const pythonRules_1 = require("./pythonRules");
+const cppRules_1 = require("./cppRules");
 function stripJavaComments(source) {
     const withoutBlockComments = source.replace(/\/\*[\s\S]*?\*\//g, "");
     return withoutBlockComments.replace(/\/\/.*$/gm, "");
@@ -32,7 +33,7 @@ function testSuiteReferencesClass(testSuite, className) {
  */
 const CommonProblemFieldsSchema = zod_1.z
     .object({
-    language: zod_1.z.enum(["java", "python"]),
+    language: zod_1.z.enum(["java", "python", "cpp"]),
     id: zod_1.z.string().trim().min(1).max(80),
     title: zod_1.z.string().trim().min(1).max(120),
     description: zod_1.z.string().trim().min(1).max(8000),
@@ -63,6 +64,17 @@ const PythonTestSuiteSchema = zod_1.z
         ctx.addIssue({
             code: zod_1.z.ZodIssueCode.custom,
             message: "Invalid test_suite: must use pytest, import solve from solution, define exactly 8 tests named test_case_1..test_case_8, avoid IO/randomness, and assert solve(...) == expected.",
+        });
+    }
+});
+const CppTestSuiteSchema = zod_1.z
+    .string()
+    .min(1)
+    .superRefine((ts, ctx) => {
+    if (!(0, cppRules_1.isValidCppTestSuite)(ts, 8)) {
+        ctx.addIssue({
+            code: zod_1.z.ZodIssueCode.custom,
+            message: 'Invalid test_suite: must #include "solution.cpp", define a main(), and include exactly 8 RUN_TEST("test_case_1".."test_case_8", ...) tests with deterministic assertions.',
         });
     }
 });
@@ -170,7 +182,18 @@ const PythonDraftSchema = CommonProblemFieldsSchema.extend({
     starter_code: pythonRules_1.PythonSourceSchema,
     reference_solution: pythonRules_1.PythonSourceSchema,
 }).strict();
-exports.GeneratedProblemDraftSchema = zod_1.z.union([LegacyDraftSchema, WorkspaceDraftSchema, PythonDraftSchema]);
+const CppDraftSchema = CommonProblemFieldsSchema.extend({
+    language: zod_1.z.literal("cpp"),
+    test_suite: CppTestSuiteSchema,
+    starter_code: cppRules_1.CppSourceSchema,
+    reference_solution: cppRules_1.CppSourceSchema,
+}).strict();
+exports.GeneratedProblemDraftSchema = zod_1.z.union([
+    LegacyDraftSchema,
+    WorkspaceDraftSchema,
+    PythonDraftSchema,
+    CppDraftSchema,
+]);
 /**
  * Persisted problem shape (reference_solution intentionally omitted).
  */
@@ -178,5 +201,6 @@ exports.GeneratedProblemSchema = zod_1.z.union([
     LegacyDraftSchema.omit({ reference_solution: true }),
     WorkspaceDraftSchemaBase.omit({ reference_workspace: true }).superRefine(refineWorkspaceProblem),
     PythonDraftSchema.omit({ reference_solution: true }),
+    CppDraftSchema.omit({ reference_solution: true }),
 ]);
 //# sourceMappingURL=problem.js.map

@@ -5,6 +5,7 @@ import {
 import { buildJavaSlotPrompt, JAVA_V1_GENERATOR_SYSTEM_PROMPT } from "./javaPrompts";
 import { javaExecutionAdapter, javaJudgeAdapter } from "./javaAdapters";
 import { PYTHON_LANGUAGE_PROFILE } from "./pythonProfile";
+import { CPP_LANGUAGE_PROFILE } from "./cppProfile";
 import type { LanguageId, LanguageProfile } from "./types";
 
 export const LANGUAGE_PROFILES: Record<LanguageId, LanguageProfile> = {
@@ -25,6 +26,7 @@ export const LANGUAGE_PROFILES: Record<LanguageId, LanguageProfile> = {
     },
   },
   python: PYTHON_LANGUAGE_PROFILE,
+  cpp: CPP_LANGUAGE_PROFILE,
 };
 
 export function listAgentSelectableLanguages(): LanguageId[] {

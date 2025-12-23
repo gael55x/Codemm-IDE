@@ -10,8 +10,9 @@ exports.CODEMM_DEFAULT_CONSTRAINTS = "Java 17, JUnit 5, no package declarations.
 exports.CODEMM_DEFAULT_CONSTRAINTS_BY_LANGUAGE = {
     java: exports.CODEMM_DEFAULT_CONSTRAINTS,
     python: "Python 3.11, pytest, standard library only, no filesystem access, no networking, time limit enforced.",
+    cpp: "C++20, g++ (GNU), standard library only, no filesystem access, no networking, deterministic behavior.",
 };
-exports.ActivityLanguageSchema = zod_1.z.enum(["java", "python"]);
+exports.ActivityLanguageSchema = zod_1.z.enum(["java", "python", "cpp"]);
 exports.DifficultySchema = zod_1.z.enum(["easy", "medium", "hard"]);
 exports.DifficultyPlanItemSchema = zod_1.z
     .object({

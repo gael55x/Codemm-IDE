@@ -28,7 +28,7 @@ export declare const SessionSchema: z.ZodObject<{
     state: z.ZodEnum<["DRAFT", "CLARIFYING", "READY", "GENERATING", "SAVED", "FAILED"]>;
     spec: z.ZodEffects<z.ZodObject<{
         version: z.ZodLiteral<"1.0">;
-        language: z.ZodEnum<["java", "python"]>;
+        language: z.ZodEnum<["java", "python", "cpp"]>;
         problem_count: z.ZodNumber;
         difficulty_plan: z.ZodEffects<z.ZodArray<z.ZodObject<{
             difficulty: z.ZodEnum<["easy", "medium", "hard"]>;
@@ -52,7 +52,7 @@ export declare const SessionSchema: z.ZodObject<{
         test_case_count: z.ZodLiteral<8>;
     }, "strict", z.ZodTypeAny, {
         version: "1.0";
-        language: "java" | "python";
+        language: "java" | "python" | "cpp";
         problem_count: number;
         difficulty_plan: {
             difficulty: "easy" | "medium" | "hard";
@@ -64,7 +64,7 @@ export declare const SessionSchema: z.ZodObject<{
         test_case_count: 8;
     }, {
         version: "1.0";
-        language: "java" | "python";
+        language: "java" | "python" | "cpp";
         problem_count: number;
         difficulty_plan: {
             difficulty: "easy" | "medium" | "hard";
@@ -76,7 +76,7 @@ export declare const SessionSchema: z.ZodObject<{
         test_case_count: 8;
     }>, {
         version: "1.0";
-        language: "java" | "python";
+        language: "java" | "python" | "cpp";
         problem_count: number;
         difficulty_plan: {
             difficulty: "easy" | "medium" | "hard";
@@ -88,7 +88,7 @@ export declare const SessionSchema: z.ZodObject<{
         test_case_count: 8;
     }, {
         version: "1.0";
-        language: "java" | "python";
+        language: "java" | "python" | "cpp";
         problem_count: number;
         difficulty_plan: {
             difficulty: "easy" | "medium" | "hard";
@@ -128,7 +128,7 @@ export declare const SessionSchema: z.ZodObject<{
     state: "DRAFT" | "CLARIFYING" | "READY" | "GENERATING" | "SAVED" | "FAILED";
     spec: {
         version: "1.0";
-        language: "java" | "python";
+        language: "java" | "python" | "cpp";
         problem_count: number;
         difficulty_plan: {
             difficulty: "easy" | "medium" | "hard";
@@ -155,7 +155,7 @@ export declare const SessionSchema: z.ZodObject<{
     state: "DRAFT" | "CLARIFYING" | "READY" | "GENERATING" | "SAVED" | "FAILED";
     spec: {
         version: "1.0";
-        language: "java" | "python";
+        language: "java" | "python" | "cpp";
         problem_count: number;
         difficulty_plan: {
             difficulty: "easy" | "medium" | "hard";
