@@ -1,6 +1,11 @@
 # Codem-backend
 Codem backend - agentic AI
 
+## Env safety (recommended)
+
+If you ever plan to commit environment values, use dotenvx precommit to avoid leaking secrets:
+- https://dotenvx.com/precommit
+
 ## Docs
 
 - Agentic platform diagrams: `AGENTIC_PLATFORM.md`
@@ -29,6 +34,13 @@ Codemm follows a strict boundary:
 - `POST /run` → sandboxed execution (code-only or multi-file) for supported languages.
 - `POST /submit` → graded execution (requires `testSuite`) using the language’s judge adapter.
 - `GET /activities/:id` (auth) → returns the persisted activity with `problems[]` (each problem includes `language`).
+
+### C++ test runner note
+
+C++ grading uses a custom `test.cpp` runner inside Docker. The generator enforces a variadic macro harness:
+- `#define RUN_TEST(name, ...) ... __VA_ARGS__ ...`
+
+This avoids C preprocessor “macro passed N arguments” errors caused by commas inside test blocks.
 
 ### Persisted agent memory (auditable)
 
