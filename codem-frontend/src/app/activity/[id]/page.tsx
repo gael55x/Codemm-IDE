@@ -328,8 +328,6 @@ export default function ActivityPage() {
   );
   const selectedLanguage = getProblemLanguage(selectedProblem);
 
-  const starterCode =
-    selectedProblem?.starter_code || selectedProblem?.classSkeleton || "";
   const testSuite = selectedProblem?.test_suite || selectedProblem?.testSuite || "";
   const testCount = countTests(selectedLanguage, testSuite);
   const activeCode = files[activeFilename] ?? "";

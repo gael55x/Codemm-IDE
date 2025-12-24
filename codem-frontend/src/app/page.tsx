@@ -40,7 +40,6 @@ export default function Home() {
   const [user, setUser] = useState<any>(null);
 
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const [sessionState, setSessionState] = useState<string | null>(null);
   const [specReady, setSpecReady] = useState(false);
   const [progress, setProgress] = useState<GenerationProgressState | null>(null);
   const [progressHint, setProgressHint] = useState<string | null>(null);
@@ -68,7 +67,6 @@ export default function Home() {
         const data = await res.json();
         if (data.sessionId) {
           setSessionId(data.sessionId);
-          setSessionState(data.state);
         }
       } catch (e) {
         console.error("Failed to create session:", e);
@@ -148,7 +146,6 @@ export default function Home() {
 
       interpretResponse(data);
 
-      setSessionState(data.state);
       setSpecReady(data.done === true);
 
       if (typeof data.nextQuestion === "string" && data.nextQuestion.trim()) {

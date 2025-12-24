@@ -67,7 +67,6 @@ function deriveSlotKeyFromQuestionKey(key?: string | null): SpecSlot["key"] | nu
 
 function humanizeSpecError(err: string, slot?: SpecSlot | null): { friendly: string; hints: string[] } {
   const lower = err.toLowerCase();
-  const hints: string[] = [];
 
   if (slot?.key === "difficulty_plan" || lower.includes("sum")) {
     return {
