@@ -18,6 +18,7 @@ import {
   optionalAuth,
   AuthRequest,
 } from "./auth";
+import { updateLearnerProfileFromSubmission } from "./services/learnerProfileService";
 
 dotenv.config();
 
@@ -307,6 +308,14 @@ app.post("/submit", optionalAuth, async (req: AuthRequest, res) => {
               totalTests,
               result.executionTimeMs
             );
+
+            updateLearnerProfileFromSubmission({
+              userId: req.user.id,
+              language: lang,
+              activityId,
+              problemId,
+              success: result.success,
+            });
           }
         } catch (parseErr) {
           console.error("Failed to parse activity problems while saving submission:", parseErr);
