@@ -2,7 +2,7 @@ import type { ActivitySpec } from "../contracts/activitySpec";
 import type { SpecDraft } from "../compiler/specDraft";
 import type { ConfidenceMap, ReadinessResult } from "./readiness";
 import { listAgentSelectableLanguages } from "../languages/profiles";
-import type { DialogueUpdate, UserEditableSpecKey } from "./dialogue";
+import type { DialogueUpdate } from "./dialogue";
 import { selectNextGoal } from "./conversationGoals";
 import type { CommitmentStore } from "./commitments";
 

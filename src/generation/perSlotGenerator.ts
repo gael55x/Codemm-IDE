@@ -571,7 +571,7 @@ export async function generateSingleProblem(
       let result = GeneratedProblemDraftSchema.safeParse(draft);
       if (!result.success) {
         const testSuiteIssue = result.error.issues.some((i) => i.path?.[0] === "test_suite");
-        const diagnostics = testSuiteIssue ? diagnoseCppTestSuite(draft.test_suite, 8) : undefined;
+        const diagnostics = testSuiteIssue ? diagnoseCppTestSuite(draft.test_suite) : undefined;
         if (diagnostics) {
           const maybeIncludeSnippet = process.env.CODEMM_TRACE_TEST_SUITES === "1";
           trace("generation.cpp.testSuite.invalid", {
@@ -610,7 +610,7 @@ export async function generateSingleProblem(
             return { draft: result.data, meta: { llmOutputHash } };
           }
 
-          const repairedDiagnostics = diagnoseCppTestSuite(repairedTestSuite, 8);
+          const repairedDiagnostics = diagnoseCppTestSuite(repairedTestSuite);
           const maybeIncludeSnippet = process.env.CODEMM_TRACE_TEST_SUITES === "1";
           trace("generation.cpp.testSuite.repair_invalid", {
             slotIndex: slot.index,

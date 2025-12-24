@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { ActivityLanguageSchema, CODEMM_DEFAULT_TEST_CASE_COUNT } from "../contracts/activitySpec";
-import type { ActivitySpec } from "../contracts/activitySpec";
 import { createCodexCompletion } from "../infra/llm/codex";
 import { tryParseJson } from "../utils/jsonParser";
 import { trace, traceText } from "../utils/trace";

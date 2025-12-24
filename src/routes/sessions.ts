@@ -36,7 +36,7 @@ function sanitizeTracePayload(payload: Record<string, unknown>): Record<string, 
   return safe;
 }
 
-sessionsRouter.post("/", (req, res) => {
+sessionsRouter.post("/", (_req, res) => {
   try {
     const { sessionId, state } = createSession(null);
     res.status(201).json({ sessionId, state });

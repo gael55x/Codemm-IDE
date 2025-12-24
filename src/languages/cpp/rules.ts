@@ -33,7 +33,7 @@ export type CppTestSuiteDiagnostics = {
   foundTestNumbers: number[];
 };
 
-export function diagnoseCppTestSuite(testSuite: string, testCount: number): CppTestSuiteDiagnostics {
+export function diagnoseCppTestSuite(testSuite: string): CppTestSuiteDiagnostics {
   const s = stripCppComments(testSuite ?? "");
 
   const includesSolutionCpp = /#\s*include\s+"solution\.cpp"/.test(s);
@@ -60,8 +60,6 @@ export function diagnoseCppTestSuite(testSuite: string, testCount: number): CppT
   }
 
   const foundTestNumbers = Array.from(found).sort((a, b) => a - b);
-  const hasAllTests =
-    found.size === testCount && Array.from({ length: testCount }, (_, i) => i + 1).every((n) => found.has(n));
 
   // If using RUN_TEST, require it to be variadic to avoid comma parsing failures.
   const hasRunTestCalls = /\bRUN_TEST\s*\(/.test(s);
@@ -83,7 +81,7 @@ export function diagnoseCppTestSuite(testSuite: string, testCount: number): CppT
 }
 
 export function isValidCppTestSuite(testSuite: string, testCount: number): boolean {
-  const d = diagnoseCppTestSuite(testSuite, testCount);
+  const d = diagnoseCppTestSuite(testSuite);
   const hasAllTests =
     d.foundTestNumbers.length === testCount &&
     Array.from({ length: testCount }, (_, i) => i + 1).every((n) => d.foundTestNumbers.includes(n));

@@ -106,7 +106,7 @@ export function authenticateToken(
 // Optional auth middleware - adds user info if token present but doesn't require it
 export function optionalAuth(
   req: AuthRequest,
-  res: Response,
+  _res: Response,
   next: NextFunction
 ) {
   const authHeader = req.headers["authorization"];

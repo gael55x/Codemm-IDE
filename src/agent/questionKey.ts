@@ -1,4 +1,3 @@
-import type { ActivitySpec } from "../contracts/activitySpec";
 import type { SpecDraft } from "../compiler/specDraft";
 import { computeReadiness, type ConfidenceMap } from "./readiness";
 import type { CommitmentStore } from "./commitments";

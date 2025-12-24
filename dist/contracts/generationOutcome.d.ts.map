@@ -1,1 +1,0 @@
-{"version":3,"file":"generationOutcome.d.ts","sourceRoot":"","sources":["../../src/contracts/generationOutcome.ts"],"names":[],"mappings":"AAAA,MAAM,MAAM,iBAAiB,GAAG;IAC9B,SAAS,EAAE,MAAM,CAAC;IAClB,OAAO,EAAE,OAAO,CAAC;IACjB,OAAO,EAAE,MAAM,CAAC;IAChB,eAAe,CAAC,EAAE,MAAM,CAAC;CAC1B,CAAC"}

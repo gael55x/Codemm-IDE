@@ -1,7 +1,3 @@
-import {
-  CODEMM_DEFAULT_CONSTRAINTS_BY_LANGUAGE,
-  CODEMM_DEFAULT_TEST_CASE_COUNT,
-} from "../contracts/activitySpec";
 import { JAVA_LANGUAGE_PROFILE } from "./java/profile";
 import { CPP_LANGUAGE_PROFILE } from "./cpp/profile";
 import { PYTHON_LANGUAGE_PROFILE } from "./python/profile";

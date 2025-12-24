@@ -2,8 +2,7 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import { LegacyGeneratedProblem } from "./types";
-import crypto from "crypto";
-import { initializeDatabase, userDb, activityDb, submissionDb, DBActivity } from "./database";
+import { initializeDatabase, userDb, activityDb, submissionDb } from "./database";
 import { sessionsRouter } from "./routes/sessions";
 import { ActivityLanguageSchema } from "./contracts/activitySpec";
 import {
