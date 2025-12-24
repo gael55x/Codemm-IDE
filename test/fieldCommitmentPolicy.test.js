@@ -26,3 +26,12 @@ test("commitment policy: allows explicit language switch", () => {
   assert.deepEqual(res, { required: false });
 });
 
+test('commitment policy: treats "c++" as explicit', () => {
+  const res = computeConfirmRequired({
+    userMessage: "c++ pls",
+    currentSpec: { language: "java" },
+    inferredPatch: { language: "cpp" },
+  });
+
+  assert.deepEqual(res, { required: false });
+});

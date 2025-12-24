@@ -175,7 +175,8 @@ function inferCommitmentSource(args: {
   }
 
   if (args.field === "language") {
-    if (/\b(java|python)\b/.test(msg)) return "explicit";
+    if (/\b(java|python|cpp|sql)\b/.test(msg)) return "explicit";
+    if (/(^|[^a-z0-9])c\+\+([^a-z0-9]|$)/.test(msg)) return "explicit";
   }
 
   return "implicit";

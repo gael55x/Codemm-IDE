@@ -10,7 +10,8 @@ function isTruthyString(v: unknown): v is string {
 function parseExplicitLanguage(userMessage: string): "java" | "python" | "cpp" | "sql" | null {
   const msg = userMessage.toLowerCase();
   if (/\bsql\b/.test(msg) || /\bsqlite\b/.test(msg)) return "sql";
-  if (/\bc\+\+\b/.test(msg) || /\bcpp\b/.test(msg)) return "cpp";
+  // Avoid \b...\b for "c++" because "+" isn't a word char (word-boundary won't match).
+  if (/(^|[^a-z0-9])c\+\+([^a-z0-9]|$)/.test(msg) || /\bcpp\b/.test(msg)) return "cpp";
   if (/\bpython\b/.test(msg)) return "python";
   if (/\bjava\b/.test(msg)) return "java";
   return null;
@@ -82,4 +83,3 @@ export function computeConfirmRequired(args: {
     },
   };
 }
-
