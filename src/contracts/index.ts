@@ -1,4 +1,5 @@
 export * from "./activitySpec";
+export * from "./learnerProfile";
 export * from "./learningMode";
 export * from "./session";
 export * from "./problem";
