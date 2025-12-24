@@ -29,6 +29,8 @@ type GenerationProgressState = {
   error: string | null;
 };
 
+type LearningMode = "practice" | "guided";
+
 export default function Home() {
   const router = useRouter();
   const { interpretResponse, formatSlotPrompt, normalizeInput, activeSlot } = useSpecBuilderUX();
@@ -40,6 +42,8 @@ export default function Home() {
   const [user, setUser] = useState<any>(null);
 
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [learningMode, setLearningMode] = useState<LearningMode>("practice");
+  const [generationLocked, setGenerationLocked] = useState(false);
   const [specReady, setSpecReady] = useState(false);
   const [progress, setProgress] = useState<GenerationProgressState | null>(null);
   const [progressHint, setProgressHint] = useState<string | null>(null);
@@ -58,11 +62,29 @@ export default function Home() {
       setUser(JSON.parse(storedUser));
     }
 
-    // Create a new session on mount
+  }, []);
+
+  useEffect(() => {
+    // Create a new session (mode is set at creation time).
     async function initSession() {
       try {
+        try {
+          progressRef.current?.close();
+        } catch {
+          // ignore
+        }
+        setSessionId(null);
+        setSpecReady(false);
+        setProgress(null);
+        setProgressHint(null);
+        setGenerationLocked(false);
+        setMessages([]);
+        setChatInput("");
+
         const res = await fetch(`${BACKEND_URL}/sessions`, {
           method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ learning_mode: learningMode }),
         });
         const data = await res.json();
         if (data.sessionId) {
@@ -73,7 +95,7 @@ export default function Home() {
       }
     }
     initSession();
-  }, []);
+  }, [learningMode]);
 
   useEffect(() => {
     return () => {
@@ -194,6 +216,7 @@ export default function Home() {
     }
 
     setLoading(true);
+    setGenerationLocked(true);
     try {
       setMessages((prev) => [
         ...prev,
@@ -483,7 +506,9 @@ export default function Home() {
                   Create a new activity
                 </h2>
                 <p className={`mb-6 max-w-md text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
-                  Answer a few questions and Codemm will generate a complete practice activity: problems, starter code, and automated tests.
+                  {learningMode === "practice"
+                    ? "Practice Mode: generate coding problems based on your request."
+                    : "Guided Mode: learn step-by-step with scaffolded problems tailored to your progress. (Coming soon)"}
                 </p>
                 {formatSlotPrompt(activeSlot) && (
                   <p className={`text-sm ${darkMode ? "text-slate-300" : "text-slate-700"}`}>
@@ -642,6 +667,31 @@ export default function Home() {
 
           {/* Input area */}
           <div className={`border-t pt-4 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <div className={`text-xs font-medium ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+                Learning Mode
+              </div>
+              <select
+                value={learningMode}
+                onChange={(e) => setLearningMode(e.target.value as LearningMode)}
+                disabled={generationLocked || messages.length > 0}
+                title={
+                  generationLocked
+                    ? "Learning mode is locked once generation starts."
+                    : messages.length > 0
+                    ? "Learning mode is set when the session is created. Start a new session to switch."
+                    : ""
+                }
+                className={`rounded-lg border px-3 py-2 text-xs outline-none transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                  darkMode
+                    ? "border-slate-700 bg-slate-900 text-slate-100 focus:border-blue-400"
+                    : "border-slate-300 bg-white text-slate-900 focus:border-blue-500"
+                }`}
+              >
+                <option value="practice">Practice Mode</option>
+                <option value="guided">Guided Mode (Beta / Coming Soon)</option>
+              </select>
+            </div>
             <div className="flex items-end gap-2">
               <div className="flex-1">
                 <textarea
