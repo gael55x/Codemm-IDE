@@ -152,26 +152,32 @@ sessionsRouter.post("/:id/messages", async (req, res) => {
 
     const result = await processSessionMessage(id, message.trim());
 
-    if (!result.accepted) {
-      return res.status(200).json({
-        accepted: false,
-        state: result.state,
-        nextQuestion: result.nextQuestion,
-        questionKey: result.questionKey,
-        done: false,
-        error: result.error,
-        spec: result.spec,
-      });
-    }
+	    if (!result.accepted) {
+	      return res.status(200).json({
+	        accepted: false,
+	        state: result.state,
+	        nextQuestion: result.nextQuestion,
+	        questionKey: result.questionKey,
+	        done: false,
+	        error: result.error,
+	        spec: result.spec,
+	        assistant_summary: (result as any).assistant_summary,
+	        assumptions: (result as any).assumptions,
+	        next_action: (result as any).next_action,
+	      });
+	    }
 
-    return res.status(200).json({
-      accepted: true,
-      state: result.state,
-      nextQuestion: result.nextQuestion,
-      questionKey: result.questionKey,
-      spec: result.spec,
-      done: result.done,
-    });
+	    return res.status(200).json({
+	      accepted: true,
+	      state: result.state,
+	      nextQuestion: result.nextQuestion,
+	      questionKey: result.questionKey,
+	      spec: result.spec,
+	      done: result.done,
+	      assistant_summary: (result as any).assistant_summary,
+	      assumptions: (result as any).assumptions,
+	      next_action: (result as any).next_action,
+	    });
   } catch (err: any) {
     const status = typeof err?.status === "number" ? err.status : 500;
     if (status >= 500) {

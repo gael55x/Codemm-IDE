@@ -14,7 +14,7 @@ import { withTraceContext } from "../utils/traceContext";
 import { resolveIntentWithLLM } from "../agent/intentResolver";
 import type { IntentResolutionOutput } from "../agent/intentResolver";
 import { computeReadiness, type ConfidenceMap } from "../agent/readiness";
-import { generateNextPrompt } from "../agent/promptGenerator";
+import { generateNextPromptPayload } from "../agent/promptGenerator";
 import { getDynamicQuestionKey } from "../agent/questionKey";
 import { proposeGenerationFallback } from "../agent/generationFallback";
 import { GenerationSlotFailureError } from "../generation/errors";
@@ -32,6 +32,7 @@ import {
 } from "../agent/commitments";
 import { DEFAULT_LEARNING_MODE, LearningModeSchema, type LearningMode } from "../contracts/learningMode";
 import { computeConfirmRequired } from "../agent/fieldCommitmentPolicy";
+import { classifyDialogueAct } from "../agent/dialogueAct";
 
 export type SessionRecord = {
   id: string;
@@ -300,6 +301,57 @@ function transitionOrThrow(from: SessionState, to: SessionState) {
   }
 }
 
+function defaultPatchForGoal(goal: string, spec: SpecDraft): { patch: JsonPatchOp[]; assumptions: string[] } | null {
+  const patch: JsonPatchOp[] = [];
+  const assumptions: string[] = [];
+
+  if (goal === "content") {
+    if (!Array.isArray(spec.topic_tags) || spec.topic_tags.length === 0) {
+      patch.push({ op: spec.topic_tags == null ? "add" : "replace", path: "/topic_tags", value: ["arrays"] });
+      assumptions.push('Defaulted topics to "arrays".');
+    }
+  }
+
+  if (goal === "checking") {
+    if (typeof spec.problem_style !== "string" || !spec.problem_style.trim()) {
+      patch.push({ op: spec.problem_style == null ? "add" : "replace", path: "/problem_style", value: "return" });
+      assumptions.push('Defaulted solution style to "return".');
+    }
+  }
+
+  if (goal === "scope") {
+    if (typeof spec.problem_count !== "number" || !Number.isFinite(spec.problem_count)) {
+      patch.push({ op: spec.problem_count == null ? "add" : "replace", path: "/problem_count", value: 3 });
+      assumptions.push("Defaulted problem count to 3.");
+    }
+  }
+
+  if (goal === "difficulty") {
+    const count = typeof spec.problem_count === "number" ? spec.problem_count : null;
+    if (count && (!Array.isArray(spec.difficulty_plan) || spec.difficulty_plan.length === 0)) {
+      const easyCount = Math.max(1, count - 1);
+      patch.push({
+        op: spec.difficulty_plan == null ? "add" : "replace",
+        path: "/difficulty_plan",
+        value: [
+          { difficulty: "easy", count: easyCount },
+          { difficulty: "medium", count: count - easyCount },
+        ],
+      });
+      assumptions.push(`Defaulted difficulty split to easy:${easyCount}, medium:${count - easyCount}.`);
+    }
+  }
+
+  if (goal === "language") {
+    if (typeof spec.language !== "string" || !spec.language.trim()) {
+      patch.push({ op: spec.language == null ? "add" : "replace", path: "/language", value: "java" });
+      assumptions.push('Defaulted language to "java".');
+    }
+  }
+
+  return patch.length > 0 ? { patch, assumptions } : null;
+}
+
 export function createSession(
   userId?: number | null,
   learningMode?: LearningMode
@@ -353,6 +405,9 @@ export type ProcessMessageResponse =
       done: false;
       error: string;
       spec: Record<string, unknown>;
+      assistant_summary?: string;
+      assumptions?: string[];
+      next_action?: string;
     }
   | {
       accepted: true;
@@ -362,6 +417,9 @@ export type ProcessMessageResponse =
       done: boolean;
       spec: Record<string, unknown>;
       patch: JsonPatchOp[];
+      assistant_summary?: string;
+      assumptions?: string[];
+      next_action?: string;
     };
 
 export async function processSessionMessage(
@@ -401,6 +459,65 @@ export async function processSessionMessage(
   traceText("session.message.combined", combined, { extra: { sessionId, bufferLen: updatedBuffer.length } });
   const existingTrace = parseJsonArray(s.intent_trace_json);
   let effectiveConfidence: ConfidenceMap = { ...existingConfidence };
+  const dialogueAct = classifyDialogueAct(combined);
+
+  // Deterministic "defer" handling: if user says "anything/whatever", apply safe defaults instead of looping.
+  if (dialogueAct.act === "DEFER" && expectedQuestionKey?.startsWith("goal:")) {
+    const goal = expectedQuestionKey.slice("goal:".length);
+    const decision = defaultPatchForGoal(goal, specWithFixed as SpecDraft);
+    if (decision) {
+      const merged = applyJsonPatch(specWithFixed as any, decision.patch) as SpecDraft;
+      const fixedAfter = ensureFixedFields(merged);
+      const finalSpec = fixedAfter.length > 0 ? (applyJsonPatch(merged as any, fixedAfter) as SpecDraft) : merged;
+
+      for (const op of decision.patch) {
+        const key = op.path.startsWith("/") ? op.path.slice(1) : op.path;
+        if (key) effectiveConfidence[key] = 1;
+      }
+      sessionDb.updateConfidenceJson(sessionId, JSON.stringify(effectiveConfidence));
+      sessionDb.updateSpecJson(sessionId, JSON.stringify(finalSpec));
+
+      const nextTrace = appendIntentTrace(existingTrace, {
+        ts: new Date().toISOString(),
+        type: "default_applied",
+        goal,
+        assumptions: decision.assumptions,
+      });
+      sessionDb.updateIntentTraceJson(sessionId, JSON.stringify(nextTrace));
+      existingTrace.splice(0, existingTrace.length, ...nextTrace);
+
+      const readiness = computeReadiness(finalSpec as SpecDraft, effectiveConfidence, commitmentsStore);
+      const prompt = generateNextPromptPayload({
+        spec: finalSpec as SpecDraft,
+        readiness,
+        confidence: effectiveConfidence,
+        commitments: commitmentsStore,
+        lastUserMessage: combined,
+      });
+
+      sessionMessageDb.create(crypto.randomUUID(), sessionId, "assistant", prompt.assistant_message);
+      const nextKey = getDynamicQuestionKey(finalSpec as SpecDraft, effectiveConfidence, commitmentsStore);
+      persistCollectorState(sessionId, { currentQuestionKey: nextKey, buffer: [] });
+
+      const done = readiness.ready;
+      const target: SessionState = done ? "READY" : "CLARIFYING";
+      transitionOrThrow(state, target);
+      sessionDb.updateState(sessionId, target);
+
+      return {
+        accepted: true,
+        state: target,
+        nextQuestion: prompt.assistant_message,
+        questionKey: nextKey,
+        done,
+        spec: finalSpec,
+        patch: [...fixed, ...decision.patch, ...fixedAfter],
+        ...(prompt.assistant_summary ? { assistant_summary: prompt.assistant_summary } : {}),
+        assumptions: decision.assumptions,
+        next_action: prompt.next_action,
+      };
+    }
+  }
 
   // Deterministic confirmation: if we're only asking to confirm low-confidence fields and the user replies "yes",
   // lock those fields and skip the LLM roundtrip.
@@ -435,7 +552,7 @@ export async function processSessionMessage(
     existingTrace.splice(0, existingTrace.length, ...nextTrace);
 
     const readiness = computeReadiness(specWithFixed as SpecDraft, effectiveConfidence, commitmentsStore);
-    const nextQuestion = generateNextPrompt({
+    const prompt = generateNextPromptPayload({
       spec: specWithFixed as SpecDraft,
       readiness,
       confidence: effectiveConfidence,
@@ -443,7 +560,7 @@ export async function processSessionMessage(
       lastUserMessage: combined,
     });
 
-    sessionMessageDb.create(crypto.randomUUID(), sessionId, "assistant", nextQuestion);
+    sessionMessageDb.create(crypto.randomUUID(), sessionId, "assistant", prompt.assistant_message);
     const nextKey = getDynamicQuestionKey(specWithFixed as SpecDraft, effectiveConfidence, commitmentsStore);
     persistCollectorState(sessionId, {
       currentQuestionKey: nextKey,
@@ -455,7 +572,18 @@ export async function processSessionMessage(
     if (!done) {
       transitionOrThrow(state, target);
       sessionDb.updateState(sessionId, target);
-      return { accepted: true, state: target, nextQuestion, questionKey: nextKey, done: false, spec: specWithFixed, patch: fixed };
+      return {
+        accepted: true,
+        state: target,
+        nextQuestion: prompt.assistant_message,
+        questionKey: nextKey,
+        done: false,
+        spec: specWithFixed,
+        patch: fixed,
+        ...(prompt.assistant_summary ? { assistant_summary: prompt.assistant_summary } : {}),
+        ...(prompt.assumptions ? { assumptions: prompt.assumptions } : {}),
+        next_action: prompt.next_action,
+      };
     }
 
     if (state === "DRAFT") {
@@ -468,7 +596,18 @@ export async function processSessionMessage(
       sessionDb.updateState(sessionId, "READY");
     }
 
-    return { accepted: true, state: "READY", nextQuestion, questionKey: nextKey, done: true, spec: specWithFixed, patch: fixed };
+    return {
+      accepted: true,
+      state: "READY",
+      nextQuestion: prompt.assistant_message,
+      questionKey: nextKey,
+      done: true,
+      spec: specWithFixed,
+      patch: fixed,
+      ...(prompt.assistant_summary ? { assistant_summary: prompt.assistant_summary } : {}),
+      ...(prompt.assumptions ? { assumptions: prompt.assumptions } : {}),
+      next_action: prompt.next_action,
+    };
   }
 
   const resolved = await resolveIntentWithLLM({
@@ -627,7 +766,7 @@ export async function processSessionMessage(
       existingTrace.splice(0, existingTrace.length, ...nextTrace);
     }
 
-    const nextQuestion = generateNextPrompt({
+    const prompt = generateNextPromptPayload({
       spec: resolved.merged,
       readiness,
       confidence: effectiveConfidence,
@@ -636,7 +775,7 @@ export async function processSessionMessage(
       dialogueUpdate,
     });
 
-    sessionMessageDb.create(crypto.randomUUID(), sessionId, "assistant", nextQuestion);
+    sessionMessageDb.create(crypto.randomUUID(), sessionId, "assistant", prompt.assistant_message);
     const nextKey = getDynamicQuestionKey(resolved.merged, effectiveConfidence, commitmentsStore);
     persistCollectorState(sessionId, {
       currentQuestionKey: nextKey,
@@ -650,11 +789,14 @@ export async function processSessionMessage(
       return {
         accepted: true,
         state: target,
-        nextQuestion,
+        nextQuestion: prompt.assistant_message,
         questionKey: nextKey,
         done: false,
         spec: nextSpec,
         patch: [...fixed, ...resolved.patch],
+        ...(prompt.assistant_summary ? { assistant_summary: prompt.assistant_summary } : {}),
+        ...(prompt.assumptions ? { assumptions: prompt.assumptions } : {}),
+        next_action: prompt.next_action,
       };
     }
 
@@ -671,18 +813,21 @@ export async function processSessionMessage(
     return {
       accepted: true,
       state: "READY",
-      nextQuestion,
+      nextQuestion: prompt.assistant_message,
       questionKey: nextKey,
       done: true,
       spec: nextSpec,
       patch: [...fixed, ...resolved.patch],
+      ...(prompt.assistant_summary ? { assistant_summary: prompt.assistant_summary } : {}),
+      ...(prompt.assumptions ? { assumptions: prompt.assumptions } : {}),
+      next_action: prompt.next_action,
     };
   }
 
   // LLM returned noop/error: fall back to deterministic "what's missing next" prompt.
   trace("session.intent.fallback", { sessionId, kind: resolved.kind });
   const readiness = computeReadiness(specWithFixed as SpecDraft, effectiveConfidence, commitmentsStore);
-  const nextQuestion = generateNextPrompt({
+  const prompt = generateNextPromptPayload({
     spec: specWithFixed as SpecDraft,
     readiness,
     confidence: effectiveConfidence,
@@ -690,7 +835,7 @@ export async function processSessionMessage(
     lastUserMessage: combined,
   });
 
-  sessionMessageDb.create(crypto.randomUUID(), sessionId, "assistant", nextQuestion);
+  sessionMessageDb.create(crypto.randomUUID(), sessionId, "assistant", prompt.assistant_message);
   const nextKey = getDynamicQuestionKey(specWithFixed as SpecDraft, effectiveConfidence, commitmentsStore);
   persistCollectorState(sessionId, {
     currentQuestionKey: nextKey,
@@ -704,11 +849,14 @@ export async function processSessionMessage(
     return {
       accepted: true,
       state: target,
-      nextQuestion,
+      nextQuestion: prompt.assistant_message,
       questionKey: nextKey,
       done: false,
       spec: specWithFixed,
       patch: fixed,
+      ...(prompt.assistant_summary ? { assistant_summary: prompt.assistant_summary } : {}),
+      ...(prompt.assumptions ? { assumptions: prompt.assumptions } : {}),
+      next_action: prompt.next_action,
     };
   }
 
@@ -725,11 +873,14 @@ export async function processSessionMessage(
     return {
       accepted: true,
       state: "READY",
-      nextQuestion,
+      nextQuestion: prompt.assistant_message,
       questionKey: nextKey,
       done: true,
       spec: specWithFixed,
       patch: fixed,
+      ...(prompt.assistant_summary ? { assistant_summary: prompt.assistant_summary } : {}),
+      ...(prompt.assumptions ? { assumptions: prompt.assumptions } : {}),
+      next_action: prompt.next_action,
     };
   });
 }
