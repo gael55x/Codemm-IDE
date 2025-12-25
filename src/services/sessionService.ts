@@ -36,6 +36,7 @@ import { classifyDialogueAct } from "../agent/dialogueAct";
 import { defaultPatchForGoal } from "../agent/deferDefaults";
 import { getLearnerProfile } from "./learnerProfileService";
 import { buildGuidedPedagogyPolicy } from "../planner/pedagogy";
+import { logConversationMessage } from "../utils/devLogs";
 
 export type SessionRecord = {
   id: string;
@@ -396,8 +397,13 @@ export async function processSessionMessage(
   const existingConfidence = parseJsonObject(s.confidence_json) as ConfidenceMap;
   let commitmentsStore: CommitmentStore = parseCommitmentsJson(s.commitments_json);
 
+  const persistMessage = (role: "user" | "assistant", content: string) => {
+    sessionMessageDb.create(crypto.randomUUID(), sessionId, role, content);
+    logConversationMessage({ sessionId, role, content });
+  };
+
   // Always persist user message.
-  sessionMessageDb.create(crypto.randomUUID(), sessionId, "user", message);
+  persistMessage("user", message);
 
   const fixed = ensureFixedFields(currentSpec as SpecDraft);
   const specWithFixed = fixed.length > 0 ? applyJsonPatch(currentSpec as any, fixed) : currentSpec;
@@ -448,7 +454,7 @@ export async function processSessionMessage(
         lastUserMessage: combined,
       });
 
-      sessionMessageDb.create(crypto.randomUUID(), sessionId, "assistant", prompt.assistant_message);
+      persistMessage("assistant", prompt.assistant_message);
       const nextKey = getDynamicQuestionKey(finalSpec as SpecDraft, effectiveConfidence, commitmentsStore);
       persistCollectorState(sessionId, { currentQuestionKey: nextKey, buffer: [] });
 
@@ -513,7 +519,7 @@ export async function processSessionMessage(
       lastUserMessage: combined,
     });
 
-    sessionMessageDb.create(crypto.randomUUID(), sessionId, "assistant", prompt.assistant_message);
+    persistMessage("assistant", prompt.assistant_message);
     const nextKey = getDynamicQuestionKey(specWithFixed as SpecDraft, effectiveConfidence, commitmentsStore);
     persistCollectorState(sessionId, {
       currentQuestionKey: nextKey,
@@ -593,7 +599,7 @@ export async function processSessionMessage(
 
   if (resolved.kind === "clarify") {
     const assistantText = resolved.question;
-    sessionMessageDb.create(crypto.randomUUID(), sessionId, "assistant", assistantText);
+    persistMessage("assistant", assistantText);
 
     sessionDb.updateSpecJson(sessionId, JSON.stringify(specWithFixed));
     const nextKey = getDynamicQuestionKey(specWithFixed as SpecDraft, effectiveConfidence, commitmentsStore);
@@ -640,7 +646,7 @@ export async function processSessionMessage(
           ? "How many problems should this activity have? (1–7)"
           : "What difficulty spread do you want? Example: easy:2, medium:2, hard:1";
 
-      sessionMessageDb.create(crypto.randomUUID(), sessionId, "assistant", assistantText);
+      persistMessage("assistant", assistantText);
       sessionDb.updateSpecJson(sessionId, JSON.stringify(specWithFixed));
       const nextKey = `confirm:${confirm.fields.slice().sort().join(",")}`;
       persistCollectorState(sessionId, { currentQuestionKey: nextKey, buffer: [] });
@@ -728,7 +734,7 @@ export async function processSessionMessage(
       dialogueUpdate,
     });
 
-    sessionMessageDb.create(crypto.randomUUID(), sessionId, "assistant", prompt.assistant_message);
+    persistMessage("assistant", prompt.assistant_message);
     const nextKey = getDynamicQuestionKey(resolved.merged, effectiveConfidence, commitmentsStore);
     persistCollectorState(sessionId, {
       currentQuestionKey: nextKey,
@@ -788,7 +794,7 @@ export async function processSessionMessage(
     lastUserMessage: combined,
   });
 
-  sessionMessageDb.create(crypto.randomUUID(), sessionId, "assistant", prompt.assistant_message);
+  persistMessage("assistant", prompt.assistant_message);
   const nextKey = getDynamicQuestionKey(specWithFixed as SpecDraft, effectiveConfidence, commitmentsStore);
   persistCollectorState(sessionId, {
     currentQuestionKey: nextKey,

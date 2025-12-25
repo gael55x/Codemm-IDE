@@ -13,6 +13,9 @@ import type { GenerationProgressEvent } from "../contracts/generationProgress";
 import { LearningModeSchema } from "../contracts/learningMode";
 import { computeReadiness } from "../agent/readiness";
 import { generateNextPromptPayload } from "../agent/promptGenerator";
+import crypto from "crypto";
+import { sessionMessageDb } from "../database";
+import { logConversationMessage } from "../utils/devLogs";
 
 export const sessionsRouter = Router();
 
@@ -53,6 +56,10 @@ sessionsRouter.post("/", (req, res) => {
       commitments: null,
       lastUserMessage: "",
     });
+
+    // Persist the initial assistant prompt so conversation logs are complete.
+    sessionMessageDb.create(crypto.randomUUID(), sessionId, "assistant", prompt.assistant_message);
+    logConversationMessage({ sessionId, role: "assistant", content: prompt.assistant_message });
 
     res.status(201).json({
       sessionId,
