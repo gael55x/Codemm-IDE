@@ -88,7 +88,7 @@ When a session is `READY`, `POST /sessions/:id/generate` runs:
 4) **Problem contract validation** (strict Zod): `src/contracts/problem.ts`
 5) **Docker verification**: compile + run tests against a generated reference artifact
    - `src/generation/referenceSolutionValidator.ts`
-6) **Guided scaffolding (deterministic)**: when a slot contains pedagogy metadata, the student-facing code/workspace is scaffolded from the validated reference artifact (markers inserted; code removed; tests unchanged).
+6) **Guided scaffolding (deterministic)**: when a slot contains pedagogy metadata, the student-facing code/workspace is scaffolded from the validated reference artifact (code removed; tests unchanged; regions wrapped with `BEGIN STUDENT TODO`/`END STUDENT TODO` markers).
 7) **Safety rule**: reference artifacts are discarded before persistence (only learner-facing fields are stored).
 
 Progress events are published over SSE:
