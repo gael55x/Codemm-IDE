@@ -13,20 +13,26 @@ function buildTodoLines(args: {
   lineComment: string;
   scaffoldLevel: number;
   learningGoal?: string | undefined;
+  hintsEnabled?: boolean | undefined;
 }): string[] {
   const lc = args.lineComment;
   const goal = (args.learningGoal ?? "").trim();
   const goalSuffix = goal ? ` (${goal})` : "";
+  const hintsEnabled = args.hintsEnabled !== false;
 
   // Higher scaffold => more guidance; lower scaffold => terser guidance.
   const lines: string[] = [`${lc} BEGIN STUDENT TODO`];
   if (args.scaffoldLevel >= 0.75) {
     lines.push(`${lc} TODO: Implement the missing core logic${goalSuffix}.`);
-    lines.push(`${lc} Hint: Use the problem description as your spec.`);
-    lines.push(`${lc} Hint: Let the existing tests drive edge cases.`);
+    if (hintsEnabled) {
+      lines.push(`${lc} Hint: Use the problem description as your spec.`);
+      lines.push(`${lc} Hint: Let the existing tests drive edge cases.`);
+    }
   } else if (args.scaffoldLevel >= 0.45) {
     lines.push(`${lc} TODO: Implement the missing logic${goalSuffix}.`);
-    lines.push(`${lc} Hint: Follow the problem description and tests.`);
+    if (hintsEnabled) {
+      lines.push(`${lc} Hint: Follow the problem description and tests.`);
+    }
   } else if (args.scaffoldLevel >= 0.2) {
     lines.push(`${lc} TODO: Implement this${goalSuffix}.`);
   } else {
@@ -259,6 +265,7 @@ function replaceJavaMethodBodies(args: {
   lineComment: string;
   scaffoldLevel: number;
   learningGoal?: string | undefined;
+  hintsEnabled?: boolean | undefined;
 }): { code: string; replaced: JavaMethodBody[] } {
   let out = args.source;
   const sorted = [...args.methodsToScaffold].sort((a, b) => b.openBrace - a.openBrace);
@@ -276,6 +283,7 @@ function replaceJavaMethodBodies(args: {
       lineComment: args.lineComment,
       scaffoldLevel: args.scaffoldLevel,
       learningGoal: args.learningGoal,
+      hintsEnabled: args.hintsEnabled,
     });
 
     const body =
@@ -295,6 +303,7 @@ function scaffoldJavaFromReference(args: {
   scaffoldLevel: number;
   lineComment: string;
   learningGoal?: string | undefined;
+  hintsEnabled?: boolean | undefined;
 }): { code: string; replaced: JavaMethodBody[] } {
   const marker = `${args.lineComment} BEGIN STUDENT TODO`;
   if (args.reference.includes(marker)) return { code: args.reference, replaced: [] };
@@ -313,6 +322,7 @@ function scaffoldJavaFromReference(args: {
     lineComment: args.lineComment,
     scaffoldLevel: args.scaffoldLevel,
     learningGoal: args.learningGoal,
+    hintsEnabled: args.hintsEnabled,
   });
 }
 
@@ -360,6 +370,7 @@ function scaffoldPythonFromReference(args: {
   scaffoldLevel: number;
   lineComment: string;
   learningGoal?: string | undefined;
+  hintsEnabled?: boolean | undefined;
 }): { code: string; replacedCount: number } {
   const marker = `${args.lineComment} BEGIN STUDENT TODO`;
   if (args.reference.includes(marker)) return { code: args.reference, replacedCount: 0 };
@@ -402,6 +413,7 @@ function scaffoldPythonFromReference(args: {
       lineComment: args.lineComment,
       scaffoldLevel: args.scaffoldLevel,
       learningGoal: args.learningGoal,
+      hintsEnabled: args.hintsEnabled,
     });
     const replacement = [header, ...todo.map((l) => `${bodyIndent}${l}`), `${bodyIndent}raise NotImplementedError("TODO")`];
     lines.splice(b.startLine, b.endLine - b.startLine, ...replacement);
@@ -415,6 +427,7 @@ function scaffoldCppFromReference(args: {
   scaffoldLevel: number;
   lineComment: string;
   learningGoal?: string | undefined;
+  hintsEnabled?: boolean | undefined;
 }): { code: string; replacedCount: number } {
   const marker = `${args.lineComment} BEGIN STUDENT TODO`;
   if (args.reference.includes(marker)) return { code: args.reference, replacedCount: 0 };
@@ -474,6 +487,7 @@ function scaffoldCppFromReference(args: {
     lineComment: args.lineComment,
     scaffoldLevel: args.scaffoldLevel,
     learningGoal: args.learningGoal,
+    hintsEnabled: args.hintsEnabled,
   });
 
   const body =
@@ -491,11 +505,13 @@ function scaffoldSqlFromReference(args: {
   scaffoldLevel: number;
   lineComment: string;
   learningGoal?: string | undefined;
+  hintsEnabled?: boolean | undefined;
 }): { code: string } {
   const todo = buildTodoLines({
     lineComment: args.lineComment,
     scaffoldLevel: args.scaffoldLevel,
     learningGoal: args.learningGoal,
+    hintsEnabled: args.hintsEnabled,
   });
   const query = args.scaffoldLevel >= 0.75 ? "SELECT 1;" : "SELECT 1;";
   return { code: `${todo.join("\n")}\n${query}\n` };
@@ -509,6 +525,7 @@ export function applyGuidedScaffolding(draft: GeneratedProblemDraft, slot: Probl
   const profile = getLanguageProfile(draft.language);
   const lineComment = profile.scaffolding?.lineComment ?? (draft.language === "python" ? "#" : "//");
   const learningGoal = slot.pedagogy?.learning_goal;
+  const hintsEnabled = slot.pedagogy?.hints_enabled;
 
   if (draft.language === "java") {
     if ("reference_solution" in draft) {
@@ -517,6 +534,7 @@ export function applyGuidedScaffolding(draft: GeneratedProblemDraft, slot: Probl
         scaffoldLevel: level,
         lineComment,
         learningGoal,
+        hintsEnabled,
       });
       trace("generation.guided.scaffolded", {
         slotIndex: slot.index,
@@ -546,6 +564,7 @@ export function applyGuidedScaffolding(draft: GeneratedProblemDraft, slot: Probl
         scaffoldLevel: level,
         lineComment,
         learningGoal,
+        hintsEnabled,
       });
       for (const m of scaffolded.replaced) {
         scaffolded_regions.push({
@@ -581,6 +600,7 @@ export function applyGuidedScaffolding(draft: GeneratedProblemDraft, slot: Probl
         scaffoldLevel: level,
         lineComment,
         learningGoal,
+        hintsEnabled,
       });
       trace("generation.guided.scaffolded", {
         slotIndex: slot.index,
@@ -598,6 +618,7 @@ export function applyGuidedScaffolding(draft: GeneratedProblemDraft, slot: Probl
         scaffoldLevel: level,
         lineComment,
         learningGoal,
+        hintsEnabled,
       });
       trace("generation.guided.scaffolded", {
         slotIndex: slot.index,
@@ -615,6 +636,7 @@ export function applyGuidedScaffolding(draft: GeneratedProblemDraft, slot: Probl
         scaffoldLevel: level,
         lineComment,
         learningGoal,
+        hintsEnabled,
       });
       trace("generation.guided.scaffolded", {
         slotIndex: slot.index,
