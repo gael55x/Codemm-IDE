@@ -11,6 +11,8 @@ import { subscribeTrace } from "../utils/traceBus";
 import { getGenerationProgressBuffer, subscribeGenerationProgress } from "../generation/progressBus";
 import type { GenerationProgressEvent } from "../contracts/generationProgress";
 import { LearningModeSchema } from "../contracts/learningMode";
+import { computeReadiness } from "../agent/readiness";
+import { generateNextPromptPayload } from "../agent/promptGenerator";
 
 export const sessionsRouter = Router();
 
@@ -42,7 +44,27 @@ sessionsRouter.post("/", (req, res) => {
     const parsed = LearningModeSchema.optional().safeParse(req.body?.learning_mode);
     const learningMode = parsed.success ? parsed.data : undefined;
     const { sessionId, state, learning_mode } = createSession(null, learningMode);
-    res.status(201).json({ sessionId, state, learning_mode });
+    const session = getSession(sessionId);
+    const readiness = computeReadiness(session.spec as any, session.confidence as any, null);
+    const prompt = generateNextPromptPayload({
+      spec: session.spec as any,
+      readiness,
+      confidence: session.confidence as any,
+      commitments: null,
+      lastUserMessage: "",
+    });
+
+    res.status(201).json({
+      sessionId,
+      state,
+      learning_mode,
+      nextQuestion: prompt.assistant_message,
+      questionKey: session.collector.currentQuestionKey,
+      done: false,
+      ...(prompt.assistant_summary ? { assistant_summary: prompt.assistant_summary } : {}),
+      ...(prompt.assumptions ? { assumptions: prompt.assumptions } : {}),
+      next_action: prompt.next_action,
+    });
   } catch (err: any) {
     console.error("Error in POST /sessions:", err);
     res.status(500).json({ error: "Failed to create session." });

@@ -163,7 +163,9 @@ export async function generateProblemsFromPlan(
 
         // Step 3: If guided pedagogy is present, derive the student-facing code/workspace
         // deterministically from the validated reference artifact.
-        const finalizedDraft = slot.pedagogy ? applyGuidedScaffolding(draft, slot) : draft;
+        const finalizedDraft = slot.pedagogy
+          ? { ...applyGuidedScaffolding(draft, slot), pedagogy: slot.pedagogy }
+          : draft;
 
         // Step 4: Discard reference_solution/reference_workspace (CRITICAL: do not persist)
         problem = discardReferenceArtifacts(finalizedDraft);
