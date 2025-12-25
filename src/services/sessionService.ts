@@ -32,6 +32,7 @@ import { buildGuidedPedagogyPolicy } from "../planner/pedagogy";
 import { logConversationMessage } from "../utils/devLogs";
 import { runDialogueTurn } from "./dialogueService";
 import { analyzeSpecGaps, defaultNextQuestionFromGaps } from "../agent/specAnalysis";
+import { parseDifficultyPlanShorthand } from "../agent/difficultyPlanParser";
 
 export type SessionRecord = {
   id: string;
@@ -375,15 +376,37 @@ export async function processSessionMessage(
     // Ensure the fixed fields are persisted even if the user message doesn't change anything.
     sessionDb.updateSpecJson(sessionId, JSON.stringify(specWithFixed));
 
-    const historyRows = sessionMessageDb.findBySessionId(sessionId).slice(-30);
-    const history = historyRows.map((m) => ({ role: m.role as any, content: m.content as string }));
+	    const historyRows = sessionMessageDb.findBySessionId(sessionId).slice(-30);
+	    const history = historyRows.map((m) => ({ role: m.role as any, content: m.content as string }));
 
-    const dialogue = await runDialogueTurn({
-      sessionState: state,
-      currentSpec: specWithFixed as SpecDraft,
-      conversationHistory: history,
-      latestUserMessage: message,
-    });
+	    const collector = getCollectorState(sessionId);
+	    const currentQuestionKey = collector.currentQuestionKey;
+
+	    let deterministicPatch: Record<string, unknown> = {};
+	    if (currentQuestionKey === "difficulty_plan") {
+	      const currentProblemCount = (specWithFixed as any).problem_count;
+	      const parsed = parseDifficultyPlanShorthand({
+	        text: message,
+	        ...(typeof currentProblemCount === "number" && Number.isFinite(currentProblemCount)
+	          ? { currentProblemCount }
+	          : {}),
+	      });
+	      if (parsed) {
+	        deterministicPatch = parsed.patch as any;
+	        trace("session.difficulty_plan.parsed_shorthand", {
+	          sessionId,
+	          explicitTotal: parsed.explicitTotal,
+	          keys: Object.keys(parsed.patch),
+	        });
+	      }
+	    }
+	
+	    const dialogue = await runDialogueTurn({
+	      sessionState: state,
+	      currentSpec: specWithFixed as SpecDraft,
+	      conversationHistory: history,
+	      latestUserMessage: message,
+	    });
 
     const traceEntry = {
       ts: new Date().toISOString(),
@@ -394,15 +417,16 @@ export async function processSessionMessage(
     const nextTrace = appendIntentTrace(existingTrace, traceEntry);
     sessionDb.updateIntentTraceJson(sessionId, JSON.stringify(nextTrace));
 
-    const collector = getCollectorState(sessionId);
-    const currentQuestionKey = collector.currentQuestionKey;
-    const pending = parsePendingConfirmation(collector.buffer);
-    const isConfirmKey = typeof currentQuestionKey === "string" && currentQuestionKey.startsWith("confirm:");
-    const userConfirmedPending = Boolean(isConfirmKey && pending && isPureConfirmationMessage(message));
+	    const pending = parsePendingConfirmation(collector.buffer);
+	    const isConfirmKey = typeof currentQuestionKey === "string" && currentQuestionKey.startsWith("confirm:");
+	    const userConfirmedPending = Boolean(isConfirmKey && pending && isPureConfirmationMessage(message));
+	
+	    const proposed: Record<string, unknown> = userConfirmedPending
+	      ? pending!.patch
+	      : ((dialogue.proposedPatch ?? {}) as Record<string, unknown>);
 
-    const proposed: Record<string, unknown> = userConfirmedPending
-      ? pending!.patch
-      : ((dialogue.proposedPatch ?? {}) as Record<string, unknown>);
+	    const mergedProposed: Record<string, unknown> =
+	      Object.keys(deterministicPatch).length > 0 ? { ...proposed, ...deterministicPatch } : proposed;
 
     const needsConfirmationFields = userConfirmedPending
       ? []
@@ -438,23 +462,23 @@ export async function processSessionMessage(
     return { key: next ? String(next) : "unknown", prompt };
   };
 
-	  if (needsConfirmationFields.length > 0) {
-	    const fields = needsConfirmationFields.slice().sort();
-	    const nextKey = dialogue.nextQuestion?.key ?? `confirm:${fields.join(",")}`;
-	    const prompt = dialogue.nextQuestion?.prompt ?? "Confirm the change you want to make.";
-	    const assistantText = [dialogue.assistantMessage, prompt].filter(Boolean).join("\n\n");
-	
-	    const pendingConfirm: PendingConfirmation = {
-	      kind: "pending_confirmation",
-	      fields: fields as UserEditableSpecKey[],
-	      patch: proposed,
-	    };
+		  if (needsConfirmationFields.length > 0) {
+		    const fields = needsConfirmationFields.slice().sort();
+		    const nextKey = dialogue.nextQuestion?.key ?? `confirm:${fields.join(",")}`;
+		    const prompt = dialogue.nextQuestion?.prompt ?? "Confirm the change you want to make.";
+		    const assistantText = [dialogue.assistantMessage, prompt].filter(Boolean).join("\n\n");
+		
+		    const pendingConfirm: PendingConfirmation = {
+		      kind: "pending_confirmation",
+		      fields: fields as UserEditableSpecKey[],
+		      patch: mergedProposed,
+		    };
 
-      trace("session.confirmation.pending", {
-        sessionId,
-        fields,
-        candidateKeys: Object.keys(proposed ?? {}),
-      });
+	      trace("session.confirmation.pending", {
+	        sessionId,
+	        fields,
+	        candidateKeys: Object.keys(mergedProposed ?? {}),
+	      });
 	
 	    persistMessage("assistant", assistantText);
 	    persistCollectorState(sessionId, { currentQuestionKey: nextKey, buffer: serializePendingConfirmation(pendingConfirm) });
@@ -478,7 +502,7 @@ export async function processSessionMessage(
   // Apply the proposed patch deterministically (and never persist invalid fields).
   let appliedUserOps: JsonPatchOp[] = [];
   let nextSpec: SpecDraft = specWithFixed as SpecDraft;
-  const userOps = buildOpsFromPartial(specWithFixed as SpecDraft, proposed as any);
+	  const userOps = buildOpsFromPartial(specWithFixed as SpecDraft, mergedProposed as any);
 
   const applyWithDraftValidation = (ops: JsonPatchOp[]) => {
     const merged = ops.length > 0 ? (applyJsonPatch(specWithFixed as any, ops) as SpecDraft) : (specWithFixed as SpecDraft);
