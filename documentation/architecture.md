@@ -21,7 +21,7 @@ This backend is built around a deterministic “SpecBuilder” agent loop plus a
 Codemm supports a first-class, user-facing **Learning Mode** that changes *how activities are constructed pedagogically* (now or later), without changing safety or verification.
 
 - **Practice Mode** (`learning_mode=practice`): current behavior — generate problems from an `ActivitySpec`.
-- **Guided Mode** (`learning_mode=guided`): scaffolded, learner-adaptive sequences (structural support only in Phase 1; behavior comes later).
+- **Guided Mode** (`learning_mode=guided`): scaffolded, learner-adaptive sequences where the student-facing code is deterministically derived from a fully-correct reference artifact.
 
 Safety/verification is identical across modes:
 - Same contracts (`ActivitySpec`, `GeneratedProblemDraft`/`GeneratedProblem`)
@@ -88,7 +88,8 @@ When a session is `READY`, `POST /sessions/:id/generate` runs:
 4) **Problem contract validation** (strict Zod): `src/contracts/problem.ts`
 5) **Docker verification**: compile + run tests against a generated reference artifact
    - `src/generation/referenceSolutionValidator.ts`
-6) **Safety rule**: reference artifacts are discarded before persistence (only learner-facing fields are stored).
+6) **Guided scaffolding (deterministic)**: when a slot contains pedagogy metadata, the student-facing code/workspace is scaffolded from the validated reference artifact (markers inserted; code removed; tests unchanged).
+7) **Safety rule**: reference artifacts are discarded before persistence (only learner-facing fields are stored).
 
 Progress events are published over SSE:
 - `GET /sessions/:id/generate/stream` via `src/generation/progressBus.ts`
