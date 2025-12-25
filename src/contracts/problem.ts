@@ -137,11 +137,25 @@ export const WorkspaceFileSchema = z
   })
   .strict();
 
+const WorkspaceScaffoldedRegionSchema = z
+  .object({
+    // File path containing the markers.
+    path: JavaFilenameSchema,
+    // Optional symbol hint (e.g., method name) for tooling/UI.
+    symbol: z.string().trim().min(1).max(120).optional(),
+    // Marker lines (language-aware); used for machine detection.
+    begin_marker: z.string().trim().min(1).max(80),
+    end_marker: z.string().trim().min(1).max(80),
+  })
+  .strict();
+
 export const WorkspaceSchema = z
   .object({
     files: z.array(WorkspaceFileSchema).min(1).max(20),
     // For Java: the class name to run via `java <entrypoint>`. Optional for test-only workspaces.
     entrypoint: z.string().trim().min(1).max(120).optional(),
+    // Optional scaffolding metadata for Guided Mode (additive; no safety impact).
+    scaffolded_regions: z.array(WorkspaceScaffoldedRegionSchema).max(200).optional(),
   })
   .strict()
   .superRefine((ws, ctx) => {
@@ -196,6 +210,20 @@ export const WorkspaceSchema = z
         message: `Entry file "${entryFile.path}" must declare class "${entrypoint}".`,
         path: ["files"],
       });
+    }
+
+    if (Array.isArray(ws.scaffolded_regions) && ws.scaffolded_regions.length) {
+      const pathSet = new Set(ws.files.map((f) => f.path));
+      for (const r of ws.scaffolded_regions) {
+        if (!pathSet.has(r.path)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `workspace.scaffolded_regions path "${r.path}" must exist in workspace.files.`,
+            path: ["scaffolded_regions"],
+          });
+          break;
+        }
+      }
     }
   });
 
