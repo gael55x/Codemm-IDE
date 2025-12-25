@@ -40,10 +40,10 @@ export const DifficultyPlanSchema = z
     }
 
     const nonZero = items.filter((i) => i.count > 0);
-    if (nonZero.length < 2) {
+    if (nonZero.length < 1) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "difficulty_plan must be mixed (at least 2 difficulties with count > 0).",
+        message: "difficulty_plan must include at least one difficulty with count > 0.",
       });
     }
   });
@@ -57,7 +57,7 @@ export const ActivitySpecSchema = z
     // Max 7 (Codemm v1.0 rule)
     problem_count: z.number().int().min(1).max(7),
 
-    // Mixed difficulty; sum must equal problem_count
+    // Difficulty plan; sum must equal problem_count
     difficulty_plan: DifficultyPlanSchema,
 
     topic_tags: z.array(z.string().trim().min(1).max(40)).min(1).max(12),
