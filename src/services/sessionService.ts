@@ -73,6 +73,15 @@ function parseJsonArray(json: string | null | undefined): unknown[] {
   return [];
 }
 
+function parseStringArray(json: string | null | undefined): string[] {
+  const arr = parseJsonArray(json);
+  const out: string[] = [];
+  for (const item of arr) {
+    if (typeof item === "string") out.push(item);
+  }
+  return out;
+}
+
 function parseGenerationOutcomes(json: string | null | undefined): GenerationOutcome[] {
   const parsed = parseJsonArray(json);
   const outcomes: GenerationOutcome[] = [];
@@ -133,6 +142,31 @@ function isPureConfirmationMessage(message: string): boolean {
   );
 }
 
+type PendingConfirmation = {
+  kind: "pending_confirmation";
+  fields: UserEditableSpecKey[];
+  patch: Record<string, unknown>;
+};
+
+function parsePendingConfirmation(buffer: string[]): PendingConfirmation | null {
+  if (!Array.isArray(buffer) || buffer.length === 0) return null;
+  const raw = buffer[0];
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<PendingConfirmation>;
+    if (!parsed || parsed.kind !== "pending_confirmation") return null;
+    if (!Array.isArray(parsed.fields) || typeof parsed.patch !== "object" || !parsed.patch) return null;
+    const fields = parsed.fields.filter((f): f is UserEditableSpecKey => (USER_EDITABLE_SPEC_KEYS as readonly string[]).includes(String(f)));
+    return { kind: "pending_confirmation", fields, patch: parsed.patch as Record<string, unknown> };
+  } catch {
+    return null;
+  }
+}
+
+function serializePendingConfirmation(p: PendingConfirmation): string[] {
+  return [JSON.stringify(p)];
+}
+
 function inferCommitmentSource(args: {
   field: UserEditableSpecKey;
   userMessage: string;
@@ -141,9 +175,12 @@ function inferCommitmentSource(args: {
   const msg = args.userMessage.trim().toLowerCase();
   const qk = args.currentQuestionKey;
   const goal = qk?.startsWith("goal:") ? qk.slice("goal:".length) : null;
+  const confirm =
+    qk?.startsWith("confirm:") ? qk.slice("confirm:".length).split(",").map((s) => s.trim()).filter(Boolean) : null;
 
   if (qk === args.field) return "explicit";
   if (qk?.startsWith("invalid:") && qk.slice("invalid:".length) === args.field) return "explicit";
+  if (confirm?.includes(args.field)) return "explicit";
   if (goal === "content" && args.field === "topic_tags") return "explicit";
   if (goal === "scope" && args.field === "problem_count") return "explicit";
   if (goal === "difficulty" && args.field === "difficulty_plan") return "explicit";
@@ -218,7 +255,8 @@ function getCollectorState(sessionId: string): SessionCollectorState {
   }
 
   const storedKey = (existing.current_question_key as string | null) ?? null;
-  return { currentQuestionKey: storedKey, buffer: [] };
+  const buffer = parseStringArray(existing.buffer_json);
+  return { currentQuestionKey: storedKey, buffer };
 }
 
 function transitionOrThrow(from: SessionState, to: SessionState) {
@@ -358,8 +396,27 @@ export async function processSessionMessage(
 
     const collector = getCollectorState(sessionId);
     const currentQuestionKey = collector.currentQuestionKey;
+    const pending = parsePendingConfirmation(collector.buffer);
+    const isConfirmKey = typeof currentQuestionKey === "string" && currentQuestionKey.startsWith("confirm:");
+    const userConfirmedPending = Boolean(isConfirmKey && pending && isPureConfirmationMessage(message));
 
-    const proposed = dialogue.proposedPatch ?? {};
+    const proposed: Record<string, unknown> = userConfirmedPending
+      ? pending!.patch
+      : ((dialogue.proposedPatch ?? {}) as Record<string, unknown>);
+
+    const needsConfirmationFields = userConfirmedPending
+      ? []
+      : Array.isArray(dialogue.needsConfirmation)
+      ? dialogue.needsConfirmation
+      : [];
+
+    if (userConfirmedPending) {
+      trace("session.confirmation.resolved", {
+        sessionId,
+        fields: pending!.fields,
+        appliedKeys: Object.keys(pending!.patch ?? {}),
+      });
+    }
 
   const buildOpsFromPartial = (base: SpecDraft, partial: Record<string, unknown>): JsonPatchOp[] => {
     const ops: JsonPatchOp[] = [];
@@ -381,14 +438,20 @@ export async function processSessionMessage(
     return { key: next ? String(next) : "unknown", prompt };
   };
 
-  if (Array.isArray(dialogue.needsConfirmation) && dialogue.needsConfirmation.length > 0) {
-    const fields = dialogue.needsConfirmation.slice().sort();
-    const nextKey = dialogue.nextQuestion?.key ?? `confirm:${fields.join(",")}`;
-    const prompt = dialogue.nextQuestion?.prompt ?? "Confirm the change you want to make.";
-    const assistantText = [dialogue.assistantMessage, prompt].filter(Boolean).join("\n\n");
-
-    persistMessage("assistant", assistantText);
-    persistCollectorState(sessionId, { currentQuestionKey: nextKey, buffer: [] });
+	  if (needsConfirmationFields.length > 0) {
+	    const fields = needsConfirmationFields.slice().sort();
+	    const nextKey = dialogue.nextQuestion?.key ?? `confirm:${fields.join(",")}`;
+	    const prompt = dialogue.nextQuestion?.prompt ?? "Confirm the change you want to make.";
+	    const assistantText = [dialogue.assistantMessage, prompt].filter(Boolean).join("\n\n");
+	
+	    const pendingConfirm: PendingConfirmation = {
+	      kind: "pending_confirmation",
+	      fields: fields as UserEditableSpecKey[],
+	      patch: proposed,
+	    };
+	
+	    persistMessage("assistant", assistantText);
+	    persistCollectorState(sessionId, { currentQuestionKey: nextKey, buffer: serializePendingConfirmation(pendingConfirm) });
 
     const target: SessionState = "CLARIFYING";
     transitionOrThrow(state, target);
