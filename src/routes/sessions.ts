@@ -14,7 +14,6 @@ import { LearningModeSchema } from "../contracts/learningMode";
 import crypto from "crypto";
 import { sessionMessageDb } from "../database";
 import { logConversationMessage } from "../utils/devLogs";
-import { analyzeSpecGaps, defaultNextQuestionFromGaps } from "../agent/specAnalysis";
 
 export const sessionsRouter = Router();
 
@@ -46,10 +45,9 @@ sessionsRouter.post("/", (req, res) => {
     const parsed = LearningModeSchema.optional().safeParse(req.body?.learning_mode);
     const learningMode = parsed.success ? parsed.data : undefined;
     const { sessionId, state, learning_mode } = createSession(null, learningMode);
-    const session = getSession(sessionId);
-    const gaps = analyzeSpecGaps(session.spec as any);
-    const promptText = defaultNextQuestionFromGaps(gaps);
-    const nextKey = gaps.complete ? "ready" : String(gaps.missing[0] ?? "topic_tags");
+    const promptText =
+      "How can I help you today?\n\nTell me what you want to learn, and optionally the language (java/python/cpp/sql) and how many problems (1–7).";
+    const nextKey = null;
 
     // Persist the initial assistant prompt so conversation logs are complete.
     sessionMessageDb.create(crypto.randomUUID(), sessionId, "assistant", promptText);
