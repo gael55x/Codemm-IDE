@@ -22,6 +22,37 @@ export const CppSourceSchema = z
         message: 'C++ source must define a solve(...) function.',
       });
     }
+
+    // The C++ contract uses a return-based solve(...) function. Reading from stdin will block in Docker
+    // and show up as a "timedOut" judge result. Disallow common stdin patterns to prevent hangs.
+    const readsFromStdin =
+      /\b(?:std::)?cin\s*>>/.test(s) ||
+      /\bscanf\s*\(/.test(s) ||
+      /\bgetchar\s*\(/.test(s) ||
+      /\bfgets\s*\(/.test(s) ||
+      /\bgetline\s*\(\s*(?:std::)?cin\b/.test(s);
+    if (readsFromStdin) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          'C++ solve(...) must not read from stdin (use only the function arguments; stdin reads will hang in the Docker judge).',
+      });
+    }
+
+    // Output is also not supported for the current C++ contract (tests call solve(...) and compare return values).
+    const writesToStdout =
+      /\b(?:std::)?cout\s*<</.test(s) ||
+      /\b(?:std::)?cerr\s*<</.test(s) ||
+      /\bprintf\s*\(/.test(s) ||
+      /\bfprintf\s*\(/.test(s) ||
+      /\bputs\s*\(/.test(s);
+    if (writesToStdout) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          'C++ solve(...) must not write to stdout/stderr (return a value; the harness handles all printing).',
+      });
+    }
   });
 
 export type CppTestSuiteDiagnostics = {
