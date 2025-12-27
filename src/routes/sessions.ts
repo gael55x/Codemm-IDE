@@ -5,14 +5,14 @@ import {
   processSessionMessage,
   generateFromSession,
 } from "../services/sessionService";
-import { authenticateToken, type AuthRequest } from "../auth";
+import { authenticateToken, optionalAuth, type AuthRequest } from "../auth";
 import { isTraceEnabled } from "../utils/trace";
 import { subscribeTrace } from "../utils/traceBus";
 import { getGenerationProgressBuffer, subscribeGenerationProgress } from "../generation/progressBus";
 import type { GenerationProgressEvent } from "../contracts/generationProgress";
 import { LearningModeSchema } from "../contracts/learningMode";
 import crypto from "crypto";
-import { sessionMessageDb } from "../database";
+import { sessionDb, sessionMessageDb } from "../database";
 import { logConversationMessage } from "../utils/devLogs";
 
 export const sessionsRouter = Router();
@@ -40,11 +40,12 @@ function sanitizeTracePayload(payload: Record<string, unknown>): Record<string, 
   return safe;
 }
 
-sessionsRouter.post("/", (req, res) => {
+sessionsRouter.post("/", optionalAuth, (req: AuthRequest, res) => {
   try {
     const parsed = LearningModeSchema.optional().safeParse(req.body?.learning_mode);
     const learningMode = parsed.success ? parsed.data : undefined;
-    const { sessionId, state, learning_mode } = createSession(null, learningMode);
+    const userId = req.user?.id ?? null;
+    const { sessionId, state, learning_mode } = createSession(userId, learningMode);
     const promptText =
       "How can I help you today?\n\nTell me what you want to learn, and optionally the language (java/python/cpp/sql) and how many problems (1–7).";
     const nextKey = null;
@@ -65,6 +66,23 @@ sessionsRouter.post("/", (req, res) => {
   } catch (err: any) {
     console.error("Error in POST /sessions:", err);
     res.status(500).json({ error: "Failed to create session." });
+  }
+});
+
+// List sessions for the authenticated user (for chat history UI).
+sessionsRouter.get("/", authenticateToken, (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.id;
+    const rawLimit = (req.query as any)?.limit;
+    const parsedLimit =
+      typeof rawLimit === "string" && rawLimit.trim() ? Number.parseInt(rawLimit, 10) : undefined;
+    const limit = typeof parsedLimit === "number" && Number.isFinite(parsedLimit) ? parsedLimit : 20;
+
+    const sessions = sessionDb.listSummariesByUserId(userId, limit);
+    res.json({ sessions });
+  } catch (err: any) {
+    console.error("Error in GET /sessions:", err);
+    res.status(500).json({ error: "Failed to list sessions." });
   }
 });
 
@@ -164,13 +182,22 @@ sessionsRouter.get("/:id/generate/stream", (req, res) => {
   });
 });
 
-sessionsRouter.post("/:id/messages", async (req, res) => {
+sessionsRouter.post("/:id/messages", optionalAuth, async (req: AuthRequest, res) => {
   try {
     const id = req.params.id as string;
     const { message } = req.body ?? {};
 
     if (typeof message !== "string" || !message.trim()) {
       return res.status(400).json({ error: "message is required string." });
+    }
+
+    // If the user is logged in and this is an anonymous session, attach it so it appears in chat history.
+    const s = sessionDb.findById(id);
+    if (!s) {
+      return res.status(404).json({ error: "Session not found." });
+    }
+    if (s.user_id == null && req.user?.id != null) {
+      sessionDb.setUserId(id, req.user.id);
     }
 
     const result = await processSessionMessage(id, message.trim());

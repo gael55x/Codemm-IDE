@@ -2,12 +2,25 @@ import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
 
-const dbDir = path.join(__dirname, "..", "data");
-if (!fs.existsSync(dbDir)) {
-  fs.mkdirSync(dbDir, { recursive: true });
-}
+const envDbPath = process.env.CODEMM_DB_PATH;
+let dbPath: string;
 
-const dbPath = path.join(dbDir, "codem.db");
+if (typeof envDbPath === "string" && envDbPath.trim()) {
+  dbPath = envDbPath.trim();
+  if (dbPath !== ":memory:") {
+    const resolved = path.isAbsolute(dbPath) ? dbPath : path.resolve(dbPath);
+    const dir = path.dirname(resolved);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+  }
+} else {
+  const dbDir = path.join(__dirname, "..", "data");
+  if (!fs.existsSync(dbDir)) {
+    fs.mkdirSync(dbDir, { recursive: true });
+  }
+  dbPath = path.join(dbDir, "codem.db");
+}
 const db: Database.Database = new Database(dbPath);
 
 // Enable foreign keys
@@ -202,6 +215,18 @@ export interface DBSession {
   generation_outcomes_json?: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface DBSessionSummary {
+  id: string;
+  state: string;
+  learning_mode: string | null;
+  created_at: string;
+  updated_at: string;
+  activity_id: string | null;
+  last_message: string | null;
+  last_message_at: string | null;
+  message_count: number;
 }
 
 export interface DBLearnerProfile {
@@ -450,6 +475,50 @@ export const sessionDb = {
       `UPDATE sessions SET generation_outcomes_json = ?, updated_at = datetime('now') WHERE id = ?`
     );
     stmt.run(outcomesJson, id);
+  },
+
+  setUserId: (id: string, userId: number) => {
+    const stmt = db.prepare(
+      `UPDATE sessions SET user_id = ?, updated_at = datetime('now') WHERE id = ?`
+    );
+    stmt.run(userId, id);
+  },
+
+  listSummariesByUserId: (userId: number, limit: number = 50): DBSessionSummary[] => {
+    const safeLimit = Math.max(1, Math.min(200, Math.floor(limit)));
+    const stmt = db.prepare(`
+      SELECT
+        s.id,
+        s.state,
+        s.learning_mode,
+        s.created_at,
+        s.updated_at,
+        s.activity_id,
+        (
+          SELECT m.content
+          FROM session_messages m
+          WHERE m.session_id = s.id
+          ORDER BY m.created_at DESC
+          LIMIT 1
+        ) AS last_message,
+        (
+          SELECT m.created_at
+          FROM session_messages m
+          WHERE m.session_id = s.id
+          ORDER BY m.created_at DESC
+          LIMIT 1
+        ) AS last_message_at,
+        (
+          SELECT COUNT(*)
+          FROM session_messages m
+          WHERE m.session_id = s.id
+        ) AS message_count
+      FROM sessions s
+      WHERE s.user_id = ?
+      ORDER BY COALESCE(last_message_at, s.updated_at) DESC
+      LIMIT ?
+    `);
+    return stmt.all(userId, safeLimit) as DBSessionSummary[];
   },
 };
 
