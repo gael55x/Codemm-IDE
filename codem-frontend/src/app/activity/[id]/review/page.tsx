@@ -58,6 +58,44 @@ export default function ActivityReviewPage() {
 
   const [tourOpen, setTourOpen] = useState(false);
 
+  const isDraft = (activity?.status ?? "PUBLISHED") === "DRAFT";
+
+  const tourSteps: TourStep[] = [
+    {
+      id: "settings",
+      selector: '[data-tour="draft-settings"]',
+      title: "Edit the draft settings",
+      body: "Change the title and timer anytime before publishing.",
+    },
+    {
+      id: "save",
+      selector: '[data-tour="draft-save"]',
+      title: "Save your draft",
+      body: "Save after making edits so they’re persisted.",
+    },
+    {
+      id: "ai-edit",
+      selector: '[data-tour="draft-ai-edit"]',
+      title: "Edit a problem with AI",
+      body: "Use AI edit to regenerate that specific problem and update its test cases.",
+    },
+    {
+      id: "publish",
+      selector: '[data-tour="draft-publish"]',
+      title: "Publish when ready",
+      body: "Publishing makes the activity shareable. Draft activities stay private.",
+    },
+  ];
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!isDraft) return;
+    const key = "codem-tutorial-draft-review-v1";
+    if (localStorage.getItem(key) === "1") return;
+    const t = window.setTimeout(() => setTourOpen(true), 600);
+    return () => window.clearTimeout(t);
+  }, [isDraft]);
+
   const shareUrl = useMemo(() => {
     if (typeof window === "undefined") return null;
     if (!activityId) return null;
@@ -264,44 +302,6 @@ export default function ActivityReviewPage() {
       </div>
     );
   }
-
-  const isDraft = (activity.status ?? "PUBLISHED") === "DRAFT";
-
-  const tourSteps: TourStep[] = [
-    {
-      id: "settings",
-      selector: '[data-tour="draft-settings"]',
-      title: "Edit the draft settings",
-      body: "Change the title and timer anytime before publishing.",
-    },
-    {
-      id: "save",
-      selector: '[data-tour="draft-save"]',
-      title: "Save your draft",
-      body: "Save after making edits so they’re persisted.",
-    },
-    {
-      id: "ai-edit",
-      selector: '[data-tour="draft-ai-edit"]',
-      title: "Edit a problem with AI",
-      body: "Use AI edit to regenerate that specific problem and update its test cases.",
-    },
-    {
-      id: "publish",
-      selector: '[data-tour="draft-publish"]',
-      title: "Publish when ready",
-      body: "Publishing makes the activity shareable. Draft activities stay private.",
-    },
-  ];
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (!isDraft) return;
-    const key = "codem-tutorial-draft-review-v1";
-    if (localStorage.getItem(key) === "1") return;
-    const t = window.setTimeout(() => setTourOpen(true), 600);
-    return () => window.clearTimeout(t);
-  }, [isDraft]);
 
   return (
     <div className="min-h-screen bg-white text-slate-900">
