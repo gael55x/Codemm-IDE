@@ -91,8 +91,8 @@ function humanizeSpecError(err: string, slot?: SpecSlot | null): { friendly: str
 
   if (slot?.key === "problem_style") {
     return {
-      friendly: "Pick how solutions are checked: stdout, return, or mixed.",
-      hints: ["You can answer with 'stdout', 'return', or 'mixed'."],
+      friendly: "Pick how solutions are checked: return value, console output, or both.",
+      hints: ["Keywords: 'return', 'stdout', or 'mixed'."],
     };
   }
 
@@ -134,8 +134,8 @@ const SPEC_SLOTS: SpecSlot[] = [
   },
   {
     key: "problem_style",
-    intent: "How should solutions be checked? (stdout, return, or mixed)",
-    examples: ["stdout", "return"],
+    intent: "How should solutions be checked? (return value / console output / both)",
+    examples: ["return", "stdout", "mixed"],
   },
   {
     key: "language",

@@ -312,7 +312,7 @@ export default function Home() {
     if (p.lastFailure) return `Retrying… (attempt ${Math.min(3, p.attempt + 1)}/3)`;
     if (p.stage === "llm") return p.attempt ? `Generating (attempt ${p.attempt}/3)` : "Generating";
     if (p.stage === "contract") return p.attempt ? `Validating contract (attempt ${p.attempt}/3)` : "Validating contract";
-    if (p.stage === "docker") return p.attempt ? `Validating in Docker (attempt ${p.attempt}/3)` : "Validating in Docker";
+    if (p.stage === "docker") return p.attempt ? `Validating in Sandbox (attempt ${p.attempt}/3)` : "Validating in Sandbox";
     return "Queued";
   }
 
