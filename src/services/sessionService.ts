@@ -33,6 +33,7 @@ import { logConversationMessage } from "../utils/devLogs";
 import { runDialogueTurn } from "./dialogueService";
 import { analyzeSpecGaps, defaultNextQuestionFromGaps } from "../agent/specAnalysis";
 import { parseDifficultyPlanShorthand } from "../agent/difficultyPlanParser";
+import { adjustNeedsConfirmationFields } from "./confirmationFlow";
 
 export type SessionRecord = {
   id: string;
@@ -383,6 +384,7 @@ export async function processSessionMessage(
 	    const currentQuestionKey = collector.currentQuestionKey;
 
 		    let deterministicPatch: Record<string, unknown> = {};
+        let deterministicDifficultyExplicitTotal = false;
 	      const currentProblemCount = (specWithFixed as any).problem_count;
 	      const parsedDifficulty = parseDifficultyPlanShorthand({
 	        text: message,
@@ -392,6 +394,7 @@ export async function processSessionMessage(
 	      });
 	      if (parsedDifficulty) {
 	        deterministicPatch = parsedDifficulty.patch as any;
+          deterministicDifficultyExplicitTotal = parsedDifficulty.explicitTotal;
 	        trace("session.difficulty_plan.parsed_shorthand", {
 	          sessionId,
 	          explicitTotal: parsedDifficulty.explicitTotal,
@@ -431,11 +434,13 @@ export async function processSessionMessage(
 	      : Array.isArray(dialogue.needsConfirmation)
 	      ? dialogue.needsConfirmation
 	      : [];
-
-	    // Deterministic parsing is treated as explicit; never force confirmation for difficulty_plan.
-	    if (Object.prototype.hasOwnProperty.call(deterministicPatch, "difficulty_plan")) {
-	      needsConfirmationFields = needsConfirmationFields.filter((f) => f !== "difficulty_plan");
-	    }
+      needsConfirmationFields = adjustNeedsConfirmationFields({
+        needsConfirmationFields,
+        currentQuestionKey: currentQuestionKey ?? null,
+        pending,
+        deterministicPatch,
+        deterministicDifficultyExplicitTotal,
+      });
 
     if (userConfirmedPending) {
       trace("session.confirmation.resolved", {
