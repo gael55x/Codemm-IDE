@@ -1,6 +1,8 @@
 import type { GeneratedProblemDraft } from "../contracts/problem";
 import type { ProblemSlot } from "../planner/types";
 import { getLanguageProfile } from "../languages/profiles";
+import type { GuidedHintsDeps } from "./guidedHints";
+import { generateDynamicGuidedHintLines } from "./guidedHints";
 import { trace } from "../utils/trace";
 
 function normalizeScaffoldLevel(raw: unknown): number | null {
@@ -80,6 +82,7 @@ function buildTodoLines(args: {
   learningGoal?: string | undefined;
   hintsEnabled?: boolean | undefined;
   topics?: string[] | undefined;
+  extraHintLines?: string[] | undefined;
 }): string[] {
   const lc = args.lineComment;
   const goal = (args.learningGoal ?? "").trim();
@@ -99,6 +102,9 @@ function buildTodoLines(args: {
           topics: args.topics,
         })
       );
+      if (Array.isArray(args.extraHintLines) && args.extraHintLines.length > 0) {
+        lines.push(...args.extraHintLines);
+      }
       lines.push(`${lc} Hint: Use the problem description as your spec.`);
       lines.push(`${lc} Hint: Let the existing tests drive edge cases.`);
     }
@@ -113,6 +119,9 @@ function buildTodoLines(args: {
           topics: args.topics,
         })
       );
+      if (Array.isArray(args.extraHintLines) && args.extraHintLines.length > 0) {
+        lines.push(...args.extraHintLines);
+      }
       lines.push(`${lc} Hint: Follow the problem description and tests.`);
     }
   } else if (args.scaffoldLevel >= 0.2) {
@@ -349,6 +358,7 @@ function replaceJavaMethodBodies(args: {
   learningGoal?: string | undefined;
   hintsEnabled?: boolean | undefined;
   topics?: string[] | undefined;
+  extraHintLines?: string[] | undefined;
 }): { code: string; replaced: JavaMethodBody[] } {
   let out = args.source;
   const sorted = [...args.methodsToScaffold].sort((a, b) => b.openBrace - a.openBrace);
@@ -368,6 +378,7 @@ function replaceJavaMethodBodies(args: {
       learningGoal: args.learningGoal,
       hintsEnabled: args.hintsEnabled,
       topics: args.topics,
+      extraHintLines: args.extraHintLines,
     });
 
     const body =
@@ -389,6 +400,7 @@ function scaffoldJavaFromReference(args: {
   learningGoal?: string | undefined;
   hintsEnabled?: boolean | undefined;
   topics?: string[] | undefined;
+  extraHintLines?: string[] | undefined;
 }): { code: string; replaced: JavaMethodBody[] } {
   const marker = `${args.lineComment} BEGIN STUDENT TODO`;
   if (args.reference.includes(marker)) return { code: args.reference, replaced: [] };
@@ -409,6 +421,7 @@ function scaffoldJavaFromReference(args: {
     learningGoal: args.learningGoal,
     hintsEnabled: args.hintsEnabled,
     topics: args.topics,
+    extraHintLines: args.extraHintLines,
   });
 }
 
@@ -458,6 +471,7 @@ function scaffoldPythonFromReference(args: {
   learningGoal?: string | undefined;
   hintsEnabled?: boolean | undefined;
   topics?: string[] | undefined;
+  extraHintLines?: string[] | undefined;
 }): { code: string; replacedCount: number } {
   const marker = `${args.lineComment} BEGIN STUDENT TODO`;
   if (args.reference.includes(marker)) return { code: args.reference, replacedCount: 0 };
@@ -502,6 +516,7 @@ function scaffoldPythonFromReference(args: {
       learningGoal: args.learningGoal,
       hintsEnabled: args.hintsEnabled,
       topics: args.topics,
+      extraHintLines: args.extraHintLines,
     });
     const replacement = [header, ...todo.map((l) => `${bodyIndent}${l}`), `${bodyIndent}raise NotImplementedError("TODO")`];
     lines.splice(b.startLine, b.endLine - b.startLine, ...replacement);
@@ -517,6 +532,7 @@ function scaffoldCppFromReference(args: {
   learningGoal?: string | undefined;
   hintsEnabled?: boolean | undefined;
   topics?: string[] | undefined;
+  extraHintLines?: string[] | undefined;
 }): { code: string; replacedCount: number } {
   const marker = `${args.lineComment} BEGIN STUDENT TODO`;
   if (args.reference.includes(marker)) return { code: args.reference, replacedCount: 0 };
@@ -578,6 +594,7 @@ function scaffoldCppFromReference(args: {
     learningGoal: args.learningGoal,
     hintsEnabled: args.hintsEnabled,
     topics: args.topics,
+    extraHintLines: args.extraHintLines,
   });
 
   const body =
@@ -597,6 +614,7 @@ function scaffoldSqlFromReference(args: {
   learningGoal?: string | undefined;
   hintsEnabled?: boolean | undefined;
   topics?: string[] | undefined;
+  extraHintLines?: string[] | undefined;
 }): { code: string } {
   const todo = buildTodoLines({
     lineComment: args.lineComment,
@@ -604,6 +622,7 @@ function scaffoldSqlFromReference(args: {
     learningGoal: args.learningGoal,
     hintsEnabled: args.hintsEnabled,
     topics: args.topics,
+    extraHintLines: args.extraHintLines,
   });
   const starter = (args.starter ?? "").trim();
   if (starter.includes(`${args.lineComment} BEGIN STUDENT TODO`)) return { code: starter };
@@ -611,7 +630,11 @@ function scaffoldSqlFromReference(args: {
   return { code: `${todo.join("\n")}\n${query}\n` };
 }
 
-export function applyGuidedScaffolding(draft: GeneratedProblemDraft, slot: ProblemSlot): GeneratedProblemDraft {
+export function applyGuidedScaffolding(
+  draft: GeneratedProblemDraft,
+  slot: ProblemSlot,
+  opts?: { extraHintLines?: string[] }
+): GeneratedProblemDraft {
   const scaffoldRaw = slot.pedagogy?.scaffold_level;
   const level = normalizeScaffoldLevel(scaffoldRaw);
   if (level == null) return draft;
@@ -621,6 +644,7 @@ export function applyGuidedScaffolding(draft: GeneratedProblemDraft, slot: Probl
   const learningGoal = slot.pedagogy?.learning_goal;
   const hintsEnabled = slot.pedagogy?.hints_enabled;
   const topics = Array.isArray(slot.topics) ? slot.topics : [];
+  const extraHintLines = Array.isArray(opts?.extraHintLines) ? opts?.extraHintLines : undefined;
 
   if (draft.language === "java") {
     if ("reference_solution" in draft) {
@@ -631,6 +655,7 @@ export function applyGuidedScaffolding(draft: GeneratedProblemDraft, slot: Probl
         learningGoal,
         hintsEnabled,
         topics,
+        extraHintLines,
       });
       trace("generation.guided.scaffolded", {
         slotIndex: slot.index,
@@ -662,6 +687,7 @@ export function applyGuidedScaffolding(draft: GeneratedProblemDraft, slot: Probl
         learningGoal,
         hintsEnabled,
         topics,
+        extraHintLines,
       });
       for (const m of scaffolded.replaced) {
         scaffolded_regions.push({
@@ -699,6 +725,7 @@ export function applyGuidedScaffolding(draft: GeneratedProblemDraft, slot: Probl
         learningGoal,
         hintsEnabled,
         topics,
+        extraHintLines,
       });
       trace("generation.guided.scaffolded", {
         slotIndex: slot.index,
@@ -718,6 +745,7 @@ export function applyGuidedScaffolding(draft: GeneratedProblemDraft, slot: Probl
         learningGoal,
         hintsEnabled,
         topics,
+        extraHintLines,
       });
       trace("generation.guided.scaffolded", {
         slotIndex: slot.index,
@@ -737,6 +765,7 @@ export function applyGuidedScaffolding(draft: GeneratedProblemDraft, slot: Probl
         learningGoal,
         hintsEnabled,
         topics,
+        extraHintLines,
       });
       trace("generation.guided.scaffolded", {
         slotIndex: slot.index,
@@ -749,4 +778,37 @@ export function applyGuidedScaffolding(draft: GeneratedProblemDraft, slot: Probl
   }
 
   return draft;
+}
+
+export async function applyGuidedScaffoldingAsync(
+  draft: GeneratedProblemDraft,
+  slot: ProblemSlot,
+  opts?: { deps?: GuidedHintsDeps }
+): Promise<GeneratedProblemDraft> {
+  const scaffoldRaw = slot.pedagogy?.scaffold_level;
+  const level = normalizeScaffoldLevel(scaffoldRaw);
+  if (level == null) return draft;
+
+  const profile = getLanguageProfile(draft.language);
+  const lineComment = profile.scaffolding?.lineComment ?? (draft.language === "python" ? "#" : "//");
+
+  let extraHintLines: string[] | undefined;
+  try {
+    const deps = opts?.deps;
+    const hintLines = await generateDynamicGuidedHintLines({
+      draft,
+      slot,
+      scaffoldLevel: level,
+      lineComment,
+      ...(deps ? { deps } : {}),
+    });
+    extraHintLines = hintLines.length > 0 ? hintLines : undefined;
+  } catch (err) {
+    trace("generation.guided.hints.error", {
+      slotIndex: slot.index,
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  return applyGuidedScaffolding(draft, slot, extraHintLines ? { extraHintLines } : undefined);
 }

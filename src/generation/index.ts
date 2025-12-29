@@ -10,7 +10,7 @@ import { trace } from "../utils/trace";
 import { GenerationContractError, GenerationSlotFailureError, type GenerationFailureKind } from "./errors";
 import type { GenerationProgressEvent } from "../contracts/generationProgress";
 import type { SlotPromptContext } from "../languages/types";
-import { applyGuidedScaffolding } from "./scaffolding";
+import { applyGuidedScaffoldingAsync } from "./scaffolding";
 
 /**
  * Discard reference_solution from GeneratedProblemDraft to produce GeneratedProblem.
@@ -191,7 +191,7 @@ export async function generateProblemsFromPlan(
         // Step 3: If guided pedagogy is present, derive the student-facing code/workspace
         // deterministically from the validated reference artifact.
         const finalizedDraft = slot.pedagogy
-          ? { ...applyGuidedScaffolding(draft, slot), pedagogy: slot.pedagogy }
+          ? { ...(await applyGuidedScaffoldingAsync(draft, slot)), pedagogy: slot.pedagogy }
           : draft;
 
         // Step 4: Discard reference_solution/reference_workspace (CRITICAL: do not persist)
