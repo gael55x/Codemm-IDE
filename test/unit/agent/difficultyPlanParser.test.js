@@ -1,9 +1,9 @@
-require("../helpers/setupBase");
+require("../../helpers/setupBase");
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { parseDifficultyPlanShorthand } = require("../../src/agent/difficultyPlanParser");
+const { parseDifficultyPlanShorthand } = require("../../../src/agent/difficultyPlanParser");
 
 test('difficulty shorthand: "easy" uses current problem_count and yields single-bucket plan', () => {
   const res = parseDifficultyPlanShorthand({ text: "easy", currentProblemCount: 4 });

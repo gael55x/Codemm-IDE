@@ -1,9 +1,9 @@
-require("../helpers/setupBase");
+require("../../../helpers/setupBase");
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { diagnoseCppTestSuite, isValidCppTestSuite } = require("../../src/languages/cpp/rules");
+const { diagnoseCppTestSuite, isValidCppTestSuite } = require("../../../../src/languages/cpp/rules");
 
 test("cpp test_suite: detects non-variadic RUN_TEST macro", () => {
   const ts = `
@@ -77,4 +77,3 @@ int main() {
   assert.deepEqual(d.foundTestNumbers, [1, 2, 3, 4, 5, 6, 7, 8]);
   assert.equal(isValidCppTestSuite(ts, 8), true);
 });
-

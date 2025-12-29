@@ -1,9 +1,9 @@
-require("../helpers/setupBase");
+require("../../helpers/setupBase");
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { applyGuidedScaffoldingAsync } = require("../../src/generation/scaffolding");
+const { applyGuidedScaffoldingAsync } = require("../../../src/generation/scaffolding");
 
 test("guided scaffolding: injects dynamic hints (best-effort) into TODO block", async () => {
   process.env.CODEMM_DYNAMIC_GUIDED_HINTS = "1";

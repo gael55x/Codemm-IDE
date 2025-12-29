@@ -1,13 +1,13 @@
-require("../helpers/setupDb");
+require("../../helpers/setupDb");
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const { Readable, Writable } = require("node:stream");
 
-const { app } = require("../../src/server");
-const { activityDb, userDb } = require("../../src/database");
-const { generateToken } = require("../../src/auth");
+const { app } = require("../../../src/server");
+const { activityDb, userDb } = require("../../../src/database");
+const { generateToken } = require("../../../src/auth");
 
 async function injectJson(method, url, body, headers = {}) {
   const raw = typeof body === "undefined" ? "" : JSON.stringify(body);

@@ -1,9 +1,9 @@
-require("../helpers/setupBase");
+require("../../../helpers/setupBase");
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { CppSourceSchema } = require("../../src/languages/cpp/rules");
+const { CppSourceSchema } = require("../../../../src/languages/cpp/rules");
 
 test("cpp: CppSourceSchema rejects stdin reads to avoid Docker timeouts", () => {
   const code = `

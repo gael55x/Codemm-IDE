@@ -1,9 +1,9 @@
-require("../helpers/setupBase");
+require("../../helpers/setupBase");
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { __test__ } = require("../../src/generation/perSlotGenerator");
+const { __test__ } = require("../../../src/generation/perSlotGenerator");
 
 test("cpp starter synthesis: strips comments before checking for solve()", () => {
   const starter = `#include <bits/stdc++.h>
@@ -33,4 +33,3 @@ long long solve(int n, const std::vector<std::tuple<int,int,int>>& edges) {
   assert.match(starter, /long long solve\s*\(/);
   assert.match(starter, /throw std::runtime_error\("TODO"\);/);
 });
-

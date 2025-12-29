@@ -1,10 +1,10 @@
-require("../helpers/setupDb");
+require("../../helpers/setupDb");
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 
-const { userDb, activityDb } = require("../../src/database");
+const { userDb, activityDb } = require("../../../src/database");
 
 test("activityDb: create/find/update roundtrip", () => {
   const suffix = crypto.randomUUID().slice(0, 8);
@@ -40,4 +40,3 @@ test("activityDb: empty patch returns current activity", () => {
   assert.equal(after.id, before.id);
   assert.equal(after.title, before.title);
 });
-

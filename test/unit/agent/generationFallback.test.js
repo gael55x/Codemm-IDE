@@ -1,9 +1,9 @@
-require("../helpers/setupBase");
+require("../../helpers/setupBase");
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { proposeGenerationFallback } = require("../../src/agent/generationFallback");
+const { proposeGenerationFallback } = require("../../../src/agent/generationFallback");
 
 test("generation fallback: switches to return style first", () => {
   const spec = {
@@ -71,4 +71,3 @@ test("generation fallback: narrows topic scope when many tags", () => {
   assert.match(d.reason, /narrowed topic/i);
   assert.deepEqual(d.patch, [{ op: "replace", path: "/topic_tags", value: ["a", "b", "c"] }]);
 });
-

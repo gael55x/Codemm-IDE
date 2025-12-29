@@ -1,10 +1,10 @@
-require("../helpers/setupBase");
+require("../../helpers/setupBase");
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
 
-const { listTestFiles } = require("../../scripts/runTests");
+const { listTestFiles } = require("../../../scripts/runTests");
 
 test("runTests: lists only .test.js files for unit", () => {
   const files = listTestFiles("unit");
@@ -23,3 +23,12 @@ test("runTests: lists unit+integration when kind=all", () => {
   assert.ok(files.some((f) => f.includes(`${path.sep}integration${path.sep}`)));
 });
 
+test("runTests: supports per-component filtering", () => {
+  const gen = listTestFiles("unit", "generation");
+  assert.ok(gen.length > 0);
+  assert.ok(gen.every((f) => f.includes(`${path.sep}unit${path.sep}generation${path.sep}`)));
+
+  const cpp = listTestFiles("unit", `languages${path.sep}cpp`);
+  assert.ok(cpp.length > 0);
+  assert.ok(cpp.every((f) => f.includes(`${path.sep}unit${path.sep}languages${path.sep}cpp${path.sep}`)));
+});

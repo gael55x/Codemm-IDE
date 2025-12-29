@@ -1,9 +1,9 @@
-require("../helpers/setupBase");
+require("../../helpers/setupBase");
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { computeConfirmRequired } = require("../../src/agent/fieldCommitmentPolicy");
+const { computeConfirmRequired } = require("../../../src/agent/fieldCommitmentPolicy");
 
 test("commitment policy: blocks implicit language switch", () => {
   const res = computeConfirmRequired({

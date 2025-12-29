@@ -1,9 +1,9 @@
-require("../helpers/setupBase");
+require("../../helpers/setupBase");
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { buildGuidedPedagogyPolicy } = require("../../src/planner/pedagogy");
+const { buildGuidedPedagogyPolicy } = require("../../../src/planner/pedagogy");
 
 test("guided pedagogy policy: scaffold depends on mastery", () => {
   const spec = {

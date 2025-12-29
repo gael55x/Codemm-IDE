@@ -1,9 +1,9 @@
-require("../helpers/setupBase");
+require("../../helpers/setupBase");
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { editDraftProblemWithAi } = require("../../src/services/activityProblemEditService");
+const { editDraftProblemWithAi } = require("../../../src/services/activityProblemEditService");
 
 test("activityProblemEditService: edits a draft problem and discards reference artifacts", async () => {
   const existing = {

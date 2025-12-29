@@ -1,10 +1,10 @@
-require("../helpers/setupBase");
+require("../../helpers/setupBase");
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { classifyDialogueAct } = require("../../src/agent/dialogueAct");
-const { defaultPatchForGoal } = require("../../src/agent/deferDefaults");
+const { classifyDialogueAct } = require("../../../src/agent/dialogueAct");
+const { defaultPatchForGoal } = require("../../../src/agent/deferDefaults");
 
 test("dialogue act: classifies DEFER", () => {
   const res = classifyDialogueAct("any / whatever");

@@ -1,9 +1,9 @@
-require("../helpers/setupBase");
+require("../../../helpers/setupBase");
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { coerceSqlTestSuiteToJsonString, isValidSqlTestSuite } = require("../../src/languages/sql/rules");
+const { coerceSqlTestSuiteToJsonString, isValidSqlTestSuite } = require("../../../../src/languages/sql/rules");
 
 test("sql test_suite coercion: object with test_case_1..8 becomes valid canonical JSON string", () => {
   const raw = {

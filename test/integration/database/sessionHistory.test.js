@@ -1,11 +1,11 @@
-require("../helpers/setupDb");
+require("../../helpers/setupDb");
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 
-const { userDb, sessionDb, sessionMessageDb } = require("../../src/database");
-const { createSession } = require("../../src/services/sessionService");
+const { userDb, sessionDb, sessionMessageDb } = require("../../../src/database");
+const { createSession } = require("../../../src/services/sessionService");
 
 test("sessionDb.listSummariesByUserId returns recent sessions with message counts", async () => {
   const userId = userDb.create("history_user", "history_user@example.com", "hash");

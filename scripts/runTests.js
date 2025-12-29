@@ -13,7 +13,7 @@ function walk(dir) {
   return out;
 }
 
-function listTestFiles(kind) {
+function listTestFiles(kind, filter) {
   const root = path.join(__dirname, "..", "test");
   const bases =
     kind === "all"
@@ -23,7 +23,18 @@ function listTestFiles(kind) {
   const files = [];
   for (const base of bases) {
     if (!fs.existsSync(base)) continue;
-    files.push(...walk(base));
+    const baseFiles = walk(base);
+    if (!filter) {
+      files.push(...baseFiles);
+      continue;
+    }
+
+    const normalizedFilter = filter.replace(/[\\/]+/g, path.sep);
+    const filtered = baseFiles.filter((file) => {
+      const rel = path.relative(base, file);
+      return rel === normalizedFilter || rel.startsWith(`${normalizedFilter}${path.sep}`);
+    });
+    files.push(...filtered);
   }
 
   return files.filter((p) => p.endsWith(".test.js")).sort((a, b) => a.localeCompare(b));
@@ -32,13 +43,14 @@ function listTestFiles(kind) {
 function main(argv) {
   const kind = argv[2];
   if (!kind || (kind !== "unit" && kind !== "integration" && kind !== "all")) {
-    console.error("Usage: node scripts/runTests.js <all|unit|integration>");
+    console.error("Usage: node scripts/runTests.js <all|unit|integration> [componentPath]");
     return 2;
   }
 
-  const files = listTestFiles(kind);
+  const filter = argv[3];
+  const files = listTestFiles(kind, filter);
   if (files.length === 0) {
-    console.error(`No ${kind} test files found.`);
+    console.error(filter ? `No ${kind} tests found for '${filter}'.` : `No ${kind} test files found.`);
     return 1;
   }
 

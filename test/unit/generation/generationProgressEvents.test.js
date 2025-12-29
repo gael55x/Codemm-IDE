@@ -1,9 +1,9 @@
-require("../helpers/setupBase");
+require("../../helpers/setupBase");
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { generateProblemsFromPlan } = require("../../src/generation");
+const { generateProblemsFromPlan } = require("../../../src/generation");
 
 test("generation progress: emits per-slot event ordering", async () => {
   const events = [];

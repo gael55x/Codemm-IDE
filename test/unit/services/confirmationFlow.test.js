@@ -1,9 +1,9 @@
-require("../helpers/setupBase");
+require("../../helpers/setupBase");
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { adjustNeedsConfirmationFields } = require("../../src/services/confirmationFlow");
+const { adjustNeedsConfirmationFields } = require("../../../src/services/confirmationFlow");
 
 test("confirmationFlow: suppresses re-confirming the same pending field", () => {
   const out = adjustNeedsConfirmationFields({
