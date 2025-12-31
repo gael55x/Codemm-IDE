@@ -1,4 +1,7 @@
-# Codem Backend
+<div align="center">
+  <h1>Codem Backend</h1>
+  <p>Implements Codemm’s deterministic session loop, verified generation pipeline, and Docker-based judging APIs.</p>
+</div>
 
 ## Project Overview
 
