@@ -12,6 +12,44 @@ export function hasGeminiApiKey(): boolean {
   return Boolean(getGeminiApiKey());
 }
 
+type GeminiModelInfo = {
+  name?: string;
+  supportedGenerationMethods?: string[];
+};
+
+function normalizeGeminiModelName(name: string): string {
+  const s = String(name ?? "").trim();
+  return s.startsWith("models/") ? s.slice("models/".length) : s;
+}
+
+function looksLikeModelNotFound(status: number, raw: string): boolean {
+  if (status === 404) return true;
+  const msg = String(raw ?? "");
+  return /models\/.+ is not found|not supported for generateContent|call listmodels/i.test(msg);
+}
+
+function pickSupportedModelFromList(models: GeminiModelInfo[], preferred: string[]): string | null {
+  const supported = models
+    .map((m) => ({
+      name: typeof m?.name === "string" ? normalizeGeminiModelName(m.name) : "",
+      methods: Array.isArray(m?.supportedGenerationMethods) ? m.supportedGenerationMethods : [],
+    }))
+    .filter((m) => Boolean(m.name) && m.methods.includes("generateContent"))
+    .map((m) => m.name);
+
+  if (supported.length === 0) return null;
+
+  const preferredNormalized = preferred.map(normalizeGeminiModelName);
+  for (const want of preferredNormalized) {
+    if (supported.includes(want)) return want;
+  }
+
+  // Heuristic: prefer flash models, then the lexicographically earliest stable pick.
+  const flash = supported.filter((m) => /\bflash\b/i.test(m));
+  if (flash.length) return flash.sort((a, b) => a.localeCompare(b))[0]!;
+  return supported.sort((a, b) => a.localeCompare(b))[0]!;
+}
+
 export async function createGeminiCompletion(
   opts: CompletionOpts,
   auth?: { apiKey?: string; baseURL?: string }
@@ -45,17 +83,62 @@ export async function createGeminiCompletion(
     return { status: res.status, raw: await res.text() };
   }
 
-  // Some free-tier keys don't have access to Pro models. If a preferred model 404s, retry with Flash.
+  async function listModels(): Promise<GeminiModelInfo[]> {
+    const url = `${baseURL}/models?key=${encodeURIComponent(apiKeyStr)}`;
+    const res = await fetch(url, { method: "GET" });
+    const raw = await res.text();
+    if (!res.ok) {
+      throw new Error(`Gemini ListModels error (${res.status}): ${raw.slice(0, 800)}`);
+    }
+    let parsed: any;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      throw new Error(`Gemini ListModels returned non-JSON: ${raw.slice(0, 800)}`);
+    }
+    return Array.isArray(parsed?.models) ? (parsed.models as GeminiModelInfo[]) : [];
+  }
+
+  // Some free-tier keys don't have access to Pro models. If the preferred model isn't supported,
+  // retry with Flash; if that still fails, use ListModels to find a supported generateContent model.
   let finalRaw: string;
   let finalStatus: number;
-  const first = await requestOnce(preferredModel);
+  const tried = new Set<string>();
+
+  const firstModel = normalizeGeminiModelName(preferredModel);
+  tried.add(firstModel);
+  const first = await requestOnce(firstModel);
   finalRaw = first.raw;
   finalStatus = first.status;
-  if (finalStatus === 404 && preferredModel !== DEFAULT_GEMINI_MODEL) {
-    const retry = await requestOnce(DEFAULT_GEMINI_MODEL);
-    finalRaw = retry.raw;
-    finalStatus = retry.status;
+
+  if (looksLikeModelNotFound(finalStatus, finalRaw)) {
+    const flash = normalizeGeminiModelName(DEFAULT_GEMINI_MODEL);
+    if (!tried.has(flash)) {
+      tried.add(flash);
+      const retry = await requestOnce(flash);
+      finalRaw = retry.raw;
+      finalStatus = retry.status;
+    }
   }
+
+  if (looksLikeModelNotFound(finalStatus, finalRaw)) {
+    const models = await listModels();
+    const picked = pickSupportedModelFromList(models, [
+      DEFAULT_GEMINI_MODEL,
+      "gemini-2.0-flash",
+      "gemini-2.0-flash-lite",
+      "gemini-1.5-flash",
+      "gemini-1.5-flash-8b",
+      "gemini-1.5-pro",
+    ]);
+    if (picked && !tried.has(picked)) {
+      tried.add(picked);
+      const retry = await requestOnce(picked);
+      finalRaw = retry.raw;
+      finalStatus = retry.status;
+    }
+  }
+
   if (finalStatus < 200 || finalStatus >= 300) {
     throw new Error(`Gemini API error (${finalStatus}): ${finalRaw.slice(0, 800)}`);
   }
