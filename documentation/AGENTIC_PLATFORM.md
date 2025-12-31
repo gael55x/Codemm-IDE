@@ -5,6 +5,9 @@ config:
 
 # Codemm — Agentic Platform (v1.x)
 
+> Note: The canonical documentation now lives in `../docs/` (start at `../docs/index.md`).  
+> This file is retained primarily for diagram-heavy reference and older links.
+
 This document captures the current “agentic, but deterministic” system design:
 
 - **SpecBuilder** (`/sessions`): 1 LLM call per user turn proposes a partial `ActivitySpec` patch; deterministic reducers apply patches, enforce Zod schemas/invariants, and pick the next question.
@@ -19,8 +22,8 @@ This document captures the current “agentic, but deterministic” system desig
 flowchart TB
   %% Frontend
   subgraph FE["Frontend (Next.js)"]
-    FE_CREATE["Create Activity UI<br/>Codem-frontend/codem-frontend/src/app/page.tsx"]
-    FE_SOLVE["Solve UI (editor + run/tests)<br/>Codem-frontend/codem-frontend/src/app/activity/[id]/page.tsx"]
+    FE_CREATE["Create Activity UI<br/>Codem-frontend/src/app/page.tsx"]
+    FE_SOLVE["Solve UI (editor + run/tests)<br/>Codem-frontend/src/app/activity/[id]/page.tsx"]
   end
 
   %% Backend

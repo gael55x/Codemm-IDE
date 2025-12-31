@@ -1,132 +1,62 @@
-# Codemm Backend
+# Codem Backend
 
-Codemm is an open-source AI agent that turns a short chat into a fully-verified programming activity (problems + tests), and provides Docker-sandboxed `run`/`submit` endpoints for execution and grading.
+## Project Overview
 
-[Project / official docs live in the frontend repo README.](https://github.com/gael55x/Codem-frontend)
+Codem Backend is the system of record for Codem’s agentic workflow: it turns user chat into a validated `ActivitySpec`, generates verified problems via Docker, and exposes execution/judging APIs used by the frontend.
 
-[Docs](documentation/README.md) · [API](documentation/api.md) · [Architecture](documentation/architecture.md)
+Core safety property: the LLM never mutates persisted state directly. It produces proposals that are validated and applied by deterministic code (schemas, invariants, state transitions, and verification).
 
-## Features
+## High-Level Architecture
 
-- **SpecBuilder sessions API** (`/sessions`): deterministic agent loop that turns chat into an `ActivitySpec`
-- **Generation pipeline** (`/sessions/:id/generate`): per-slot LLM drafts → contract validation → Docker verification → persist (reference artifacts discarded)
-- **Execution / judge**: `/run` (code-only) and `/submit` (graded with tests) run inside language-specific Docker judge images
-- **Observability**: progress SSE + optional sanitized trace SSE (no prompts/raw generations/reference artifacts)
-- **SQLite persistence**: sessions, activities, submissions, learner profile
+- **HTTP API (Express)**: routes in `src/server.ts` and `src/routes/sessions.ts`
+- **SpecBuilder (agent loop)**: per-message processing that proposes and applies spec patches deterministically
+- **Deterministic compiler boundary**: schema validation, invariants, JSON Patch application, confirmation gating
+- **Planner**: deterministic expansion of `ActivitySpec` into per-problem “slots” (`src/planner`)
+- **Generator**: per-slot LLM calls + strict contracts + retries (`src/generation`)
+- **Judge**: Docker-sandboxed compile/run/testing (`src/judge`, `src/languages/*`)
+- **Persistence (SQLite)**: sessions, activities, submissions, learner profiles (`src/database.ts`)
 
-## Design (agentic, but deterministic)
+## Core Responsibilities
 
-Codemm follows a strict boundary:
+- Define and enforce contracts (`ActivitySpec`, `GeneratedProblemDraft`, progress events).
+- Orchestrate the session state machine and deterministic confirmation/commitment rules.
+- Generate problems and validate reference artifacts in Docker, then discard reference artifacts before persistence.
+- Execute and judge untrusted user submissions in Docker (`/run`, `/submit`).
+- Provide observability streams that are safe to show to users (no prompts, no reference solutions).
 
-- **LLM proposes**: intent inference + per-slot drafts
-- **Compiler decides**: Zod contracts, invariants, JSON Patch application, readiness gates, commitment locking, and next-question selection
-- **No direct state mutation by the LLM**: persisted state is produced by audited deterministic code paths
+## Getting Oriented
 
-More detail: `documentation/architecture.md`
+**Repo layout**
 
-## Learning modes
+- `src/routes/sessions.ts` – sessions API + SSE streams
+- `src/services/sessionService.ts` – session orchestration + state transitions
+- `src/compiler/*` – draft validation, invariants, JSON Patch application
+- `src/agent/*` – deterministic parsing, readiness, commitments, fallbacks
+- `src/planner/*` – slot planning from a validated spec
+- `src/generation/*` – per-slot generation, Docker validation, scaffolding
+- `src/languages/*` – language profiles, rules, adapters
+- `src/database.ts` – SQLite schema and DB access layer
 
-Codemm exposes a user-facing **Learning Mode** (pedagogy), without changing verification:
+**Local development**
 
-- `practice`: generate problems directly from an `ActivitySpec`
-- `guided`: scaffolded sequences where student-facing starter code is deterministically derived from a fully-correct reference artifact (tests unchanged; reference artifacts discarded before persistence)
+Prereqs: Node.js 18+, npm, Docker Desktop (or equivalent).
 
-Optional “guided hints” (best-effort) can be disabled with `CODEMM_DYNAMIC_GUIDED_HINTS=0`.
+```bash
+cp .env.example .env
+./run-codem-backend.sh
+```
 
-## Getting started (local dev)
+Health check: `curl -sS http://localhost:${PORT:-4000}/health`
 
-Prereqs: Node.js 18+, npm, Docker Desktop (or a running Docker daemon).
+## Documentation Index
 
-1) Configure env:
-
-- `cp .env.example .env`
-- Set `JWT_SECRET` and one LLM API key (`CODEX_API_KEY`/`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY`/`GOOGLE_API_KEY`)
-
-2) Run (recommended one-command runner; builds judge images if needed):
-
-- `./run-codem-backend.sh`
-
-Then verify:
-
-- Health check: `curl -sS http://localhost:4000/health`
-
-### Manual run
-
-- `npm install`
-- `npm run dev`
-
-Production build:
-
-- `npm run build && npm start`
-
-### Runner toggles
-
-- `BACKEND_MODE=prod ./run-codem-backend.sh`
-- `REBUILD_JUDGE=1 ./run-codem-backend.sh`
-
-## Configuration
-
-All variables are read from `.env` (see `.env.example`).
-
-| Variable | Purpose | Default |
-| --- | --- | --- |
-| `PORT` | HTTP port | `4000` |
-| `JWT_SECRET` | JWT signing secret | (required) |
-| `CODEX_PROVIDER` | LLM provider (`openai`/`anthropic`/`gemini`/`auto`) | `auto` |
-| `CODEX_API_KEY` | OpenAI-compatible API key (preferred name) | (one required) |
-| `OPENAI_API_KEY` | OpenAI API key (alias) | (optional) |
-| `ANTHROPIC_API_KEY` | Anthropic API key | (optional) |
-| `GEMINI_API_KEY` | Gemini API key | (optional) |
-| `GOOGLE_API_KEY` | Gemini API key (alias) | (optional) |
-| `CODEX_MODEL` | Override model name | (optional) |
-| `CODEX_BASE_URL` | Override API base URL | (optional) |
-| `ANTHROPIC_MODEL` | Override Anthropic model | (optional) |
-| `ANTHROPIC_BASE_URL` | Override Anthropic API base URL | (optional) |
-| `GEMINI_MODEL` | Override Gemini model | (optional) |
-| `GEMINI_BASE_URL` | Override Gemini API base URL | (optional) |
-| `CODEMM_USER_KEY_ENCRYPTION_KEY` | 32-byte base64 (or 64 hex) key used to encrypt per-user LLM API keys at rest | (required for per-user keys) |
-| `CODEMM_DB_PATH` | SQLite DB file path (or `:memory:`) | `data/codem.db` |
-| `JUDGE_TIMEOUT_MS` | Judge timeout cap (ms) | `15000` |
-| `CODEMM_RUN_TIMEOUT_MS` | `/run` timeout (ms, cap 30000) | (optional) |
-| `CODEMM_TRACE` | Enable sanitized SSE trace | `0` |
-| `CODEMM_TRACE_TEST_SUITES` | Include debug test snippets in trace | `0` |
-| `CODEMM_DYNAMIC_GUIDED_HINTS` | Enable/disable guided hint injection | `1` |
-
-## API (high level)
-
-Base URL: `http://localhost:${PORT:-4000}`
-
-- Sessions (SpecBuilder): `POST /sessions`, `POST /sessions/:id/messages`, `POST /sessions/:id/generate`, `GET /sessions/:id/generate/stream`
-- Execution / judge: `POST /run`, `POST /submit`
-- Auth / profile: `POST /auth/register`, `POST /auth/login`, `GET /auth/me`, `GET /profile`
-
-Full details + curl examples: `documentation/api.md`
-
-## Docker judge images
-
-The runner builds these images automatically (from the repo root):
-
-- `codem-java-judge` (`Dockerfile.java-judge`)
-- `codem-python-judge` (`Dockerfile.python-judge`)
-- `codem-cpp-judge` (`Dockerfile.cpp-judge`)
-- `codem-sql-judge` (`Dockerfile.sql-judge`)
-
-## Tests
-
-- `npm test`
-- `npm run test:unit`
-- `npm run test:integration`
-- `npm run smoke:generate`
-
-## Security notes
-
-- `/run` and `/submit` execute untrusted code; keep Docker running with sane defaults and do not expose these endpoints publicly without additional hardening.
-- Trace/progress streams intentionally omit prompts, raw generations, and reference artifacts.
+- Start here: `docs/index.md`
+- Architecture and invariants: `docs/architecture.md`, `docs/agentic-design/principles.md`
+- Data flow & state machine: `docs/data-flow.md`, `docs/agentic-design/memory-and-state.md`
+- API reference: `docs/api/backend.md`
+- Debugging & tracing: `docs/debugging.md`
+- Contributing: `docs/contributing.md`
 
 ## Contributing
 
-- Issues and PRs welcome. If you’re adding new languages/contracts, start with `documentation/architecture.md` so changes stay deterministic.
-
-## License
-
-Package metadata currently declares `ISC` (see `package.json`). If you intend to distribute this as “open source”, add a top-level `LICENSE` file to make terms explicit.
+See `docs/contributing.md` for workflow, local validation, and how to extend the system without weakening determinism, contracts, or sandboxing.
