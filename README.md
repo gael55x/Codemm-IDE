@@ -1,57 +1,96 @@
-# Codem Frontend
+# Codemm
 
 ## Project Overview
 
-Codem Frontend is the Next.js web UI for Codem: a deterministic, agentic system that turns a short chat into verified programming activities (problems + tests) and lets learners run/submit code against the backend judge.
+Codemm is an agentic system that turns a short chat into **verified programming activities** (problems + tests), then runs and grades untrusted code in a Docker sandbox.
 
-- Repo: `Codem-frontend` (this repository)
-- Backend: `https://github.com/gael55x/Codem-backend`
+Core design goal: **determinism at the boundaries**.
+
+- The LLM can propose patches/drafts.
+- Deterministic backend code validates, gates, and decides what becomes durable state.
+- “Verified” means reference artifacts are validated in Docker; reference artifacts are discarded before persistence.
+
+Repositories:
+
+- Frontend (UI + docs entrypoint): `Codem-frontend` (this repository)
+- Backend (agent loop + generation + judge): `https://github.com/gael55x/Codem-backend`
 
 ## High-Level Architecture
 
-The frontend is a thin client over a backend-driven workflow:
-
-- **Next.js App Router UI** renders the chat, activity viewer/editor, and account pages.
-- **HTTP + SSE integration** calls backend APIs for sessions, generation, activities, and judging.
-- **No hidden logic**: all agent “decisions” (validation, state transitions, retries, confirmation gating) live in the backend; the frontend is responsible for UX and for faithfully rendering server state and progress.
+- **Frontend (Next.js)**: renders the session chat, generation progress, solving UI, auth/profile, and community views.
+- **Backend (Express)**:
+  - **SpecBuilder**: session loop that turns chat into a validated `ActivitySpec`.
+  - **Planner**: deterministic expansion of a validated spec into per-problem “slots”.
+  - **Generator**: per-slot LLM drafting + strict contracts + Docker verification.
+  - **Judge**: `/run` (execution) and `/submit` (graded) inside Docker per language adapter.
+  - **Persistence**: SQLite for sessions, activities, submissions, and learner-profile signals.
 
 ## Core Responsibilities
 
-- Sessions UX: create session, send user messages, render `nextQuestion` / `questionKey`, and display the evolving `spec`.
-- Generation UX: open `GET /sessions/:id/generate/stream` and render structured progress events.
-- Activity UX: fetch activities, render problems, run code (`POST /run`) and submit graded solutions (`POST /submit`).
-- Account UX: auth, profile, and per-user LLM key settings (encrypted at rest by the backend when enabled).
-- Community UX: list and view community-published activities.
+**Frontend**
+
+- Drive sessions and render backend control signals (`questionKey`, `nextQuestion`, `spec` snapshots).
+- Stream and render generation progress (SSE).
+- Call judge endpoints and render results (`/run`, `/submit`).
+
+**Backend**
+
+- Enforce contracts and invariants (schemas, confirmation/commitment rules, state machine).
+- Verify generated reference artifacts in Docker; never persist reference artifacts.
+- Sandbox and grade untrusted code in Docker.
 
 ## Getting Oriented
 
-**Repo layout**
+**Where to look first**
 
-- `src/app` – Next.js routes (chat, activity solving, auth, profile, community)
-- `src/components` – UI components used across routes
-- `src/lib` – client-side helpers and normalization
-- `src/types` – frontend-facing types for API payloads/events
+- Frontend session UI: `src/app/page.tsx`
+- Frontend solve UI: `src/app/activity/[id]/page.tsx`
+- Backend sessions API: `https://github.com/gael55x/Codem-backend/blob/main/src/routes/sessions.ts`
+- Backend orchestration: `https://github.com/gael55x/Codem-backend/blob/main/src/services/sessionService.ts`
 
-**Local development**
+**Local development (end-to-end)**
 
-Prereqs: Node.js 18+, npm. For end-to-end flows you also need the backend running (and Docker for the backend judge).
+Prereqs: Node.js 18+, npm, Docker (for backend judging).
+
+1) Backend:
 
 ```bash
+git clone https://github.com/gael55x/Codem-backend.git
+cd Codem-backend
+cp .env.example .env
+./run-codem-backend.sh
+```
+
+2) Frontend (new terminal):
+
+```bash
+git clone https://github.com/gael55x/Codem-frontend.git
+cd Codem-frontend
+cp .env.local.example .env
 npm install
 npm run dev
 ```
 
 Configure backend URL via `.env`:
 
-- `NEXT_PUBLIC_BACKEND_URL` (defaults to `http://localhost:4000` in code)
+- `NEXT_PUBLIC_BACKEND_URL` (defaults to `http://localhost:4000`)
 
 ## Documentation Index
 
-- Start here: `docs/index.md`
-- Frontend ↔ backend integration: `docs/api/backend.md`
-- Frontend architecture & state: `docs/architecture.md`, `docs/state-and-models.md`
-- Debugging SSE progress/trace: `docs/debugging.md`
+**This repo (frontend + integration)**
+
+- Docs home: `docs/index.md`
+- Frontend architecture: `docs/architecture.md`
+- Client workflows: `docs/data-flow.md`
+- Backend API as consumed by the UI: `docs/api/backend.md`
+
+**Backend (authoritative agent + judge design)**
+
+- Docs home: `https://github.com/gael55x/Codem-backend/tree/main/docs`
+- Agentic design invariants: `https://github.com/gael55x/Codem-backend/tree/main/docs/agentic-design`
+- Backend API reference: `https://github.com/gael55x/Codem-backend/blob/main/docs/api/backend.md`
 
 ## Contributing
 
-See `docs/contributing.md` for development workflow, conventions, and how to keep frontend behavior aligned with backend contracts.
+- Frontend contributing guide: `docs/contributing.md`
+- Backend contributing guide: `https://github.com/gael55x/Codem-backend/blob/main/docs/contributing.md`
