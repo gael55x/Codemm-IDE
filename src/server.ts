@@ -21,6 +21,7 @@ import {
 } from "./auth";
 import { updateLearnerProfileFromSubmission } from "./services/learnerProfileService";
 import { editDraftProblemWithAi } from "./services/activityProblemEditService";
+import { encryptSecret } from "./utils/secretBox";
 
 dotenv.config();
 
@@ -504,6 +505,67 @@ app.get("/profile", authenticateToken, (req: AuthRequest, res) => {
   } catch (err: any) {
     console.error("Error in /profile:", err);
     res.status(500).json({ error: "Failed to fetch profile" });
+  }
+});
+
+// ============ Per-user LLM key routes (encrypted at rest) ============
+
+const LlmProviderSchema = z.enum(["openai", "anthropic", "gemini"]);
+const UpsertUserLlmKeySchema = z
+  .object({
+    provider: LlmProviderSchema,
+    apiKey: z.string().trim().min(10).max(400),
+  })
+  .strict();
+
+app.get("/profile/llm", authenticateToken, (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.id;
+    const cfg = userDb.getLlmConfig(userId);
+    const configured = Boolean(cfg?.llm_provider && cfg?.llm_api_key_enc);
+    return res.json({
+      configured,
+      provider: configured ? cfg!.llm_provider : null,
+      updatedAt: configured ? cfg!.llm_api_key_updated_at : null,
+    });
+  } catch (err: any) {
+    console.error("Error in GET /profile/llm:", err);
+    return res.status(500).json({ error: "Failed to fetch LLM settings." });
+  }
+});
+
+app.put("/profile/llm", authenticateToken, (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.id;
+    const parsed = UpsertUserLlmKeySchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid payload." });
+    }
+
+    const apiKeyEnc = encryptSecret(parsed.data.apiKey);
+    userDb.setLlmConfig(userId, parsed.data.provider, apiKeyEnc);
+    return res.json({ ok: true });
+  } catch (err: any) {
+    const msg = String(err?.message ?? err);
+    if (/CODEMM_USER_KEY_ENCRYPTION_KEY/i.test(msg)) {
+      return res.status(501).json({
+        error: "Server is not configured to store per-user API keys.",
+        detail: msg,
+      });
+    }
+    console.error("Error in PUT /profile/llm:", err);
+    return res.status(500).json({ error: "Failed to save LLM settings." });
+  }
+});
+
+app.delete("/profile/llm", authenticateToken, (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.id;
+    userDb.clearLlmConfig(userId);
+    return res.json({ ok: true });
+  } catch (err: any) {
+    console.error("Error in DELETE /profile/llm:", err);
+    return res.status(500).json({ error: "Failed to clear LLM settings." });
   }
 });
 

@@ -36,10 +36,29 @@ export function initializeDatabase() {
       email TEXT UNIQUE NOT NULL,
       password_hash TEXT NOT NULL,
       display_name TEXT,
+      llm_provider TEXT,
+      llm_api_key_enc TEXT,
+      llm_api_key_updated_at TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     )
   `);
+
+  // Lightweight migrations for older DBs.
+  const userCols = db
+    .prepare(`PRAGMA table_info(users)`)
+    .all() as { name: string }[];
+  const userColSet = new Set(userCols.map((c) => c.name));
+
+  if (!userColSet.has("llm_provider")) {
+    db.exec(`ALTER TABLE users ADD COLUMN llm_provider TEXT`);
+  }
+  if (!userColSet.has("llm_api_key_enc")) {
+    db.exec(`ALTER TABLE users ADD COLUMN llm_api_key_enc TEXT`);
+  }
+  if (!userColSet.has("llm_api_key_updated_at")) {
+    db.exec(`ALTER TABLE users ADD COLUMN llm_api_key_updated_at TEXT`);
+  }
 
   // sessions 
   db.exec(`
@@ -201,6 +220,9 @@ export interface User {
   email: string;
   password_hash: string;
   display_name?: string;
+  llm_provider?: string | null;
+  llm_api_key_enc?: string | null;
+  llm_api_key_updated_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -318,6 +340,35 @@ export const userDb = {
       `UPDATE users SET display_name = ?, updated_at = datetime('now') WHERE id = ?`
     );
     stmt.run(displayName, userId);
+  },
+
+  getLlmConfig: (userId: number): { llm_provider: string | null; llm_api_key_enc: string | null; llm_api_key_updated_at: string | null } | null => {
+    const stmt = db.prepare(`SELECT llm_provider, llm_api_key_enc, llm_api_key_updated_at FROM users WHERE id = ?`);
+    const row = stmt.get(userId) as any;
+    if (!row) return null;
+    return {
+      llm_provider: typeof row.llm_provider === "string" ? row.llm_provider : row.llm_provider ?? null,
+      llm_api_key_enc: typeof row.llm_api_key_enc === "string" ? row.llm_api_key_enc : row.llm_api_key_enc ?? null,
+      llm_api_key_updated_at: typeof row.llm_api_key_updated_at === "string" ? row.llm_api_key_updated_at : row.llm_api_key_updated_at ?? null,
+    };
+  },
+
+  setLlmConfig: (userId: number, provider: string, apiKeyEnc: string) => {
+    const stmt = db.prepare(
+      `UPDATE users
+       SET llm_provider = ?, llm_api_key_enc = ?, llm_api_key_updated_at = datetime('now'), updated_at = datetime('now')
+       WHERE id = ?`
+    );
+    stmt.run(provider, apiKeyEnc, userId);
+  },
+
+  clearLlmConfig: (userId: number) => {
+    const stmt = db.prepare(
+      `UPDATE users
+       SET llm_provider = NULL, llm_api_key_enc = NULL, llm_api_key_updated_at = NULL, updated_at = datetime('now')
+       WHERE id = ?`
+    );
+    stmt.run(userId);
   },
 };
 

@@ -11,11 +11,14 @@ export function hasAnthropicApiKey(): boolean {
   return Boolean(getAnthropicApiKey());
 }
 
-export async function createAnthropicCompletion(opts: CompletionOpts): Promise<CompletionResult> {
-  const apiKey = getAnthropicApiKey();
+export async function createAnthropicCompletion(
+  opts: CompletionOpts,
+  auth?: { apiKey?: string; baseURL?: string; version?: string }
+): Promise<CompletionResult> {
+  const apiKey = auth?.apiKey ?? getAnthropicApiKey();
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not set in the environment.");
 
-  const baseURL = (process.env.ANTHROPIC_BASE_URL ?? "https://api.anthropic.com").replace(/\/+$/, "");
+  const baseURL = (auth?.baseURL ?? process.env.ANTHROPIC_BASE_URL ?? "https://api.anthropic.com").replace(/\/+$/, "");
   const model = opts.model ?? process.env.ANTHROPIC_MODEL ?? process.env.CODEX_MODEL ?? DEFAULT_ANTHROPIC_MODEL;
 
   const res = await fetch(`${baseURL}/v1/messages`, {
@@ -23,7 +26,7 @@ export async function createAnthropicCompletion(opts: CompletionOpts): Promise<C
     headers: {
       "content-type": "application/json",
       "x-api-key": apiKey,
-      "anthropic-version": process.env.ANTHROPIC_VERSION ?? "2023-06-01",
+      "anthropic-version": auth?.version ?? process.env.ANTHROPIC_VERSION ?? "2023-06-01",
     },
     body: JSON.stringify({
       model,
@@ -56,4 +59,3 @@ export async function createAnthropicCompletion(opts: CompletionOpts): Promise<C
 
   return { content: [{ type: "text", text }] };
 }
-

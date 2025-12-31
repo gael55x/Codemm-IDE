@@ -30,8 +30,19 @@ export function getOpenAiClient(): OpenAI {
   return openaiClient;
 }
 
-export async function createOpenAiCompletion(opts: CompletionOpts): Promise<CompletionResult> {
-  const client = getOpenAiClient();
+function getOpenAiClientForRequest(auth?: { apiKey?: string; baseURL?: string }): OpenAI {
+  if (auth?.apiKey) {
+    const baseURL = auth.baseURL ?? process.env.CODEX_BASE_URL;
+    return new OpenAI({ apiKey: auth.apiKey, ...(baseURL ? { baseURL } : {}) });
+  }
+  return getOpenAiClient();
+}
+
+export async function createOpenAiCompletion(
+  opts: CompletionOpts,
+  auth?: { apiKey?: string; baseURL?: string }
+): Promise<CompletionResult> {
+  const client = getOpenAiClientForRequest(auth);
   const completion = await client.chat.completions.create({
     model: opts.model ?? process.env.CODEX_MODEL ?? DEFAULT_OPENAI_MODEL,
     temperature: opts.temperature ?? 0.3,
@@ -45,4 +56,3 @@ export async function createOpenAiCompletion(opts: CompletionOpts): Promise<Comp
   const text = completion.choices[0]?.message?.content ?? "";
   return { content: [{ type: "text", text }] };
 }
-

@@ -58,6 +58,7 @@ Common:
 - `ANTHROPIC_MODEL`, `GEMINI_MODEL` (optional; provider-specific model override)
 - `JUDGE_TIMEOUT_MS` (default `15000`, cap `30000`)
 - `CODEMM_RUN_TIMEOUT_MS` (default `8000`, cap `30000`)
+- `CODEMM_USER_KEY_ENCRYPTION_KEY` (required to store per-user LLM API keys)
 
 Tracing / debugging:
 - `CODEMM_TRACE=1` enables `GET /sessions/:id/trace` (SSE)

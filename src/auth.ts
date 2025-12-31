@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { Request, Response, NextFunction } from "express";
 import { userDb } from "./database";
+import { withTraceContext } from "./utils/traceContext";
 
 const rawJwtSecret = process.env.JWT_SECRET;
 
@@ -100,7 +101,7 @@ export function authenticateToken(
     email: payload.email,
   };
 
-  next();
+  return withTraceContext({ userId: payload.id }, () => next());
 }
 
 // Optional auth middleware - adds user info if token present but doesn't require it
@@ -126,5 +127,9 @@ export function optionalAuth(
     }
   }
 
-  next();
+  const userId = req.user?.id;
+  if (typeof userId === "number") {
+    return withTraceContext({ userId }, () => next());
+  }
+  return next();
 }

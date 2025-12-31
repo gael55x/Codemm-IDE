@@ -2,15 +2,16 @@ import { AsyncLocalStorage } from "async_hooks";
 
 export type TraceContext = {
   sessionId?: string;
+  userId?: number;
 };
 
 const storage = new AsyncLocalStorage<TraceContext>();
 
-export function withTraceContext<T>(ctx: TraceContext, fn: () => Promise<T>): Promise<T> {
-  return storage.run(ctx, fn);
+export function withTraceContext<T>(ctx: TraceContext, fn: () => T): T {
+  const prev = storage.getStore() ?? {};
+  return storage.run({ ...prev, ...ctx }, fn);
 }
 
 export function getTraceContext(): TraceContext | undefined {
   return storage.getStore();
 }
-

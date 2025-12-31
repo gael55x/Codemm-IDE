@@ -11,11 +11,14 @@ export function hasGeminiApiKey(): boolean {
   return Boolean(getGeminiApiKey());
 }
 
-export async function createGeminiCompletion(opts: CompletionOpts): Promise<CompletionResult> {
-  const apiKey = getGeminiApiKey();
+export async function createGeminiCompletion(
+  opts: CompletionOpts,
+  auth?: { apiKey?: string; baseURL?: string }
+): Promise<CompletionResult> {
+  const apiKey = auth?.apiKey ?? getGeminiApiKey();
   if (!apiKey) throw new Error("GEMINI_API_KEY (or GOOGLE_API_KEY) is not set in the environment.");
 
-  const baseURL = (process.env.GEMINI_BASE_URL ?? "https://generativelanguage.googleapis.com/v1beta").replace(
+  const baseURL = (auth?.baseURL ?? process.env.GEMINI_BASE_URL ?? "https://generativelanguage.googleapis.com/v1beta").replace(
     /\/+$/,
     ""
   );
@@ -60,4 +63,3 @@ export async function createGeminiCompletion(opts: CompletionOpts): Promise<Comp
 
   return { content: [{ type: "text", text }] };
 }
-

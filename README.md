@@ -84,6 +84,7 @@ All variables are read from `.env` (see `.env.example`).
 | `ANTHROPIC_BASE_URL` | Override Anthropic API base URL | (optional) |
 | `GEMINI_MODEL` | Override Gemini model | (optional) |
 | `GEMINI_BASE_URL` | Override Gemini API base URL | (optional) |
+| `CODEMM_USER_KEY_ENCRYPTION_KEY` | 32-byte base64 (or 64 hex) key used to encrypt per-user LLM API keys at rest | (required for per-user keys) |
 | `CODEMM_DB_PATH` | SQLite DB file path (or `:memory:`) | `data/codem.db` |
 | `JUDGE_TIMEOUT_MS` | Judge timeout cap (ms) | `15000` |
 | `CODEMM_RUN_TIMEOUT_MS` | `/run` timeout (ms, cap 30000) | (optional) |

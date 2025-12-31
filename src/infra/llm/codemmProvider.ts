@@ -2,6 +2,9 @@ import type { CompletionOpts, CompletionResult, LlmProvider } from "./types";
 import { createAnthropicCompletion, hasAnthropicApiKey } from "./adapters/anthropic";
 import { createGeminiCompletion, hasGeminiApiKey } from "./adapters/gemini";
 import { createOpenAiCompletion, hasOpenAiApiKey, getOpenAiClient } from "./adapters/openai";
+import { getTraceContext } from "../../utils/traceContext";
+import { userDb } from "../../database";
+import { decryptSecret } from "../../utils/secretBox";
 
 function normalizeProvider(raw: unknown): LlmProvider | null {
   const s = String(raw ?? "").trim().toLowerCase();
@@ -19,7 +22,32 @@ function getConfiguredProvider(): LlmProvider | null {
 }
 
 export function hasAnyLlmApiKey(): boolean {
-  return hasOpenAiApiKey() || hasAnthropicApiKey() || hasGeminiApiKey();
+  if (hasOpenAiApiKey() || hasAnthropicApiKey() || hasGeminiApiKey()) return true;
+  const userId = getTraceContext()?.userId;
+  if (typeof userId !== "number") return false;
+  const cfg = userDb.getLlmConfig(userId);
+  return Boolean(cfg?.llm_provider && cfg?.llm_api_key_enc);
+}
+
+function getUserLlmOverride(): { provider: LlmProvider; apiKey: string } | null {
+  const userId = getTraceContext()?.userId;
+  if (typeof userId !== "number") return null;
+
+  const cfg = userDb.getLlmConfig(userId);
+  if (!cfg || !cfg.llm_provider || !cfg.llm_api_key_enc) return null;
+
+  const provider = normalizeProvider(cfg.llm_provider);
+  if (!provider) return null;
+
+  try {
+    const apiKey = decryptSecret(cfg.llm_api_key_enc).trim();
+    if (!apiKey) return null;
+    return { provider, apiKey };
+  } catch (err: any) {
+    throw new Error(
+      `Stored LLM API key could not be decrypted. Re-save your key in settings. (${err?.message ?? "decrypt failed"})`
+    );
+  }
 }
 
 function resolveProviderOrThrow(): LlmProvider {
@@ -56,6 +84,13 @@ function resolveProviderOrThrow(): LlmProvider {
 }
 
 export async function createCodemmCompletion(opts: CompletionOpts): Promise<CompletionResult> {
+  const userOverride = getUserLlmOverride();
+  if (userOverride) {
+    if (userOverride.provider === "openai") return createOpenAiCompletion(opts, { apiKey: userOverride.apiKey });
+    if (userOverride.provider === "anthropic") return createAnthropicCompletion(opts, { apiKey: userOverride.apiKey });
+    return createGeminiCompletion(opts, { apiKey: userOverride.apiKey });
+  }
+
   const provider = resolveProviderOrThrow();
   if (provider === "openai") return createOpenAiCompletion(opts);
   if (provider === "anthropic") return createAnthropicCompletion(opts);
@@ -67,4 +102,3 @@ export const createCodexCompletion = createCodemmCompletion;
 
 // Backwards-compatible export for older code that directly asked for an OpenAI client.
 export const getCodexClient = getOpenAiClient;
-
