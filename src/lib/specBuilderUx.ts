@@ -89,13 +89,20 @@ function humanizeSpecError(err: string, slot?: SpecSlot | null): { friendly: str
     };
   }
 
+  // Handle SQL-specific style restriction
+  if (slot?.key === "problem_style" && lower.includes("sql")) {
+    return {
+      friendly: "SQL problems only support console output checking right now.",
+      hints: ["Please reply with 'stdout'."],
+    };
+  }
+
   if (slot?.key === "problem_style") {
     return {
       friendly: "Pick how solutions are checked: return value, console output, or both.",
       hints: ["Keywords: 'return', 'stdout', or 'mixed'."],
     };
   }
-
   if (slot?.key === "problem_count") {
     return {
       friendly: "Share how many problems you want (1-7).",
