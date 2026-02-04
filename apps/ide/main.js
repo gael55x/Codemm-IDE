@@ -97,6 +97,33 @@ function checkDockerRunning({ dockerBin, timeoutMs = 8000 }) {
   };
 }
 
+async function waitForDockerRunning({
+  dockerBin,
+  totalTimeoutMs = 180_000,
+  tryTimeoutMs = 8_000,
+  intervalMs = 2_000,
+} = {}) {
+  const deadline = Date.now() + totalTimeoutMs;
+  let lastLogAt = 0;
+  /** @type {string} */
+  let lastReason = "Not checked yet";
+
+  while (Date.now() < deadline) {
+    const r = checkDockerRunning({ dockerBin, timeoutMs: tryTimeoutMs });
+    if (r.ok) return { ok: true, reason: "" };
+    lastReason = r.reason;
+
+    if (Date.now() - lastLogAt > 5000) {
+      lastLogAt = Date.now();
+      console.log(`[ide] Docker not ready yet; retrying... (${lastReason})`);
+    }
+
+    await sleep(intervalMs);
+  }
+
+  return { ok: false, reason: lastReason };
+}
+
 function killProcessTree(proc) {
   if (!proc || !proc.pid) return;
   try {
@@ -220,7 +247,7 @@ async function createWindowAndBoot() {
   console.log(`[ide] dockerBin=${dockerBin}`);
 
   console.log('[ide] Checking Docker ("docker info")...');
-  const dockerCheck = checkDockerRunning({ dockerBin });
+  const dockerCheck = await waitForDockerRunning({ dockerBin });
   if (!dockerCheck.ok) {
     dialog.showErrorBox(
       "Docker Not Running",
