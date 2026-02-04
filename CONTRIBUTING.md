@@ -24,6 +24,8 @@ npm install
 npm run dev
 ```
 
+Note: this is an npm workspaces monorepo. Use the repo root for installs; do not maintain per-app lockfiles.
+
 This will:
 
 - start backend from `apps/backend`
