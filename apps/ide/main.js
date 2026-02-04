@@ -77,9 +77,24 @@ function findDockerBinary() {
   return null;
 }
 
-function ensureDockerRunning({ dockerBin }) {
-  const res = spawnSync(dockerBin, ["info"], { stdio: "ignore" });
-  return res.status === 0;
+function checkDockerRunning({ dockerBin, timeoutMs = 8000 }) {
+  const res = spawnSync(dockerBin, ["info"], {
+    stdio: "pipe",
+    timeout: timeoutMs,
+    encoding: "utf8",
+  });
+
+  if (res.error && res.error.code === "ETIMEDOUT") {
+    return { ok: false, reason: `Timed out after ${timeoutMs}ms while running "docker info".` };
+  }
+
+  if (res.status === 0) return { ok: true, reason: "" };
+
+  const detail = String((res.stderr || res.stdout || "")).trim();
+  return {
+    ok: false,
+    reason: detail || `docker info exited with code ${String(res.status)}`,
+  };
 }
 
 function killProcessTree(proc) {
@@ -204,12 +219,16 @@ async function createWindowAndBoot() {
   }
   console.log(`[ide] dockerBin=${dockerBin}`);
 
-  if (!ensureDockerRunning({ dockerBin })) {
+  console.log('[ide] Checking Docker ("docker info")...');
+  const dockerCheck = checkDockerRunning({ dockerBin });
+  if (!dockerCheck.ok) {
     dialog.showErrorBox(
       "Docker Not Running",
       [
         "Codemm requires Docker for judging.",
         "Start Docker Desktop, wait until it's running, then relaunch Codemm-IDE.",
+        "",
+        `Details: ${dockerCheck.reason}`,
       ].join("\n"),
     );
     app.quit();
