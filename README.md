@@ -22,6 +22,18 @@ npm install
 npm run dev
 ```
 
+## Contribute
+
+See `CONTRIBUTING.md`.
+
+## Troubleshoot
+
+See `docs/TROUBLESHOOTING.md`.
+
+## What This App Does
+
+See `docs/FUNCTIONS.md`.
+
 ## Environment Overrides
 
 - `CODEMM_BACKEND_PORT` (default: `4000`)
