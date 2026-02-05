@@ -3,6 +3,7 @@ const { app, BrowserWindow, dialog, shell } = require("electron");
 const { spawn, spawnSync } = require("child_process");
 const fs = require("fs");
 const http = require("http");
+const os = require("os");
 const path = require("path");
 
 const DEFAULT_BACKEND_PORT = Number.parseInt(process.env.CODEMM_BACKEND_PORT || "4000", 10);
@@ -14,6 +15,37 @@ let mainWindow = null;
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+function expandTilde(p) {
+  if (p === "~") return os.homedir();
+  if (p.startsWith("~/") || p.startsWith("~\\")) return path.join(os.homedir(), p.slice(2));
+  return p;
+}
+
+function configureElectronStoragePaths() {
+  const userDataOverride = typeof process.env.CODEMM_USER_DATA_DIR === "string" ? process.env.CODEMM_USER_DATA_DIR.trim() : "";
+  const cacheOverride = typeof process.env.CODEMM_CACHE_DIR === "string" ? process.env.CODEMM_CACHE_DIR.trim() : "";
+  const logsOverride = typeof process.env.CODEMM_LOGS_DIR === "string" ? process.env.CODEMM_LOGS_DIR.trim() : "";
+
+  let userDataDir = userDataOverride ? expandTilde(userDataOverride) : app.getPath("userData");
+  if (!path.isAbsolute(userDataDir)) userDataDir = path.resolve(userDataDir);
+
+  // Ensure dirs exist before Chromium tries to create caches (prevents noisy "Failed to write ... index file" errors).
+  fs.mkdirSync(userDataDir, { recursive: true });
+  if (userDataOverride) app.setPath("userData", userDataDir);
+
+  let cacheDir = cacheOverride ? expandTilde(cacheOverride) : path.join(userDataDir, "Cache");
+  if (!path.isAbsolute(cacheDir)) cacheDir = path.resolve(cacheDir);
+  fs.mkdirSync(cacheDir, { recursive: true });
+  app.setPath("cache", cacheDir);
+
+  let logsDir = logsOverride ? expandTilde(logsOverride) : path.join(userDataDir, "Logs");
+  if (!path.isAbsolute(logsDir)) logsDir = path.resolve(logsDir);
+  fs.mkdirSync(logsDir, { recursive: true });
+  app.setPath("logs", logsDir);
+
+  return { userDataDir, cacheDir, logsDir };
 }
 
 function waitForHttpOk(url, { timeoutMs = 120_000, intervalMs = 500 } = {}) {
@@ -220,6 +252,10 @@ async function ensureJudgeImages({ dockerBin, backendDir, env }) {
 }
 
 async function createWindowAndBoot() {
+  const storage = configureElectronStoragePaths();
+  console.log(`[ide] userDataDir=${storage.userDataDir}`);
+  console.log(`[ide] cacheDir=${storage.cacheDir}`);
+
   // __dirname = apps/ide
   const repoRoot = path.resolve(__dirname, "..", "..");
   const backendDir =
@@ -394,6 +430,28 @@ async function createWindowAndBoot() {
 
   // Start backend (workspace).
   console.log("[ide] Starting backend (workspace codem-backend)...");
+  const usingExplicitDbPath = typeof baseEnv.CODEMM_DB_PATH === "string" && baseEnv.CODEMM_DB_PATH.trim();
+  const backendDbPath =
+    typeof baseEnv.CODEMM_DB_PATH === "string" && baseEnv.CODEMM_DB_PATH.trim()
+      ? baseEnv.CODEMM_DB_PATH.trim()
+      : path.join(storage.userDataDir, "codem.db");
+
+  // If this is the first run with the new default (userData DB), copy the old repo-local dev DB once.
+  // This helps avoid "lost data" surprises when developers already have users/sessions stored locally.
+  if (!usingExplicitDbPath) {
+    const legacyDbPath = path.join(backendDir, "data", "codem.db");
+    if (!fs.existsSync(backendDbPath) && fs.existsSync(legacyDbPath)) {
+      try {
+        fs.mkdirSync(path.dirname(backendDbPath), { recursive: true });
+        fs.copyFileSync(legacyDbPath, backendDbPath);
+        console.log(`[ide] Migrated legacy DB: ${legacyDbPath} -> ${backendDbPath}`);
+      } catch (err) {
+        console.warn(`[ide] Failed to migrate legacy DB: ${legacyDbPath} -> ${backendDbPath}`, err);
+      }
+    }
+  }
+  console.log(`[ide] backendDbPath=${backendDbPath}`);
+
   backendProc = spawn("npm", ["--workspace", "codem-backend", "run", "dev"], {
     cwd: repoRoot,
     env: {
@@ -401,6 +459,7 @@ async function createWindowAndBoot() {
       PORT: String(DEFAULT_BACKEND_PORT),
       // Avoid a noisy welcome prompt in packaging contexts.
       CODEMM_HTTP_LOG: baseEnv.CODEMM_HTTP_LOG || "0",
+      CODEMM_DB_PATH: backendDbPath,
     },
     detached: true,
     stdio: ["ignore", "pipe", "pipe"],
