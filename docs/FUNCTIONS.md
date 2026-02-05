@@ -28,6 +28,11 @@ This document describes what the desktop wrapper does (and does not do).
 - `CODEMM_FRONTEND_DIR` default `apps/frontend`
 - `DOCKER_PATH` optional path to the `docker` binary (helps for GUI-launched apps with a limited PATH)
 - `CODEMM_REBUILD_JUDGE=1` forces rebuilding judge Docker images on launch
+- `CODEMM_DB_PATH` optional path to the backend SQLite DB file (the IDE sets this to `<userData>/codem.db` by default)
+- `CODEMM_DB_DIR` optional directory for the backend DB (used only if `CODEMM_DB_PATH` is not set)
+- `CODEMM_USER_DATA_DIR` overrides Electron `userData` dir
+- `CODEMM_CACHE_DIR` overrides Electron cache dir
+- `CODEMM_LOGS_DIR` overrides Electron logs dir
 
 ## Logging
 
