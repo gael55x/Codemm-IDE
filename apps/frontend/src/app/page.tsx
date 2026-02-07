@@ -12,9 +12,6 @@ import type {
   GenerationProgressEvent,
 } from "@/types/generationProgress";
 
-const BACKEND_URL =
-  process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
-
 type ChatMessage = {
   role: "user" | "assistant";
   content: string;
@@ -56,6 +53,12 @@ type ThreadSummary = {
   message_count: number;
 };
 
+function requireThreadsApi() {
+  const api = (window as any)?.codemm?.threads;
+  if (!api) throw new Error("IDE bridge unavailable. Launch this UI inside Codemm-IDE.");
+  return api;
+}
+
 export default function Home() {
   const router = useRouter();
   const { interpretResponse, formatSlotPrompt, normalizeInput, activeSlot } = useSpecBuilderUX();
@@ -76,7 +79,7 @@ export default function Home() {
   const [specReady, setSpecReady] = useState(false);
   const [progress, setProgress] = useState<GenerationProgressState | null>(null);
   const [progressHint, setProgressHint] = useState<string | null>(null);
-  const progressRef = useRef<EventSource | null>(null);
+  const progressRef = useRef<null | { unsubscribe: () => Promise<void> }>(null);
 
   const [tourOpen, setTourOpen] = useState(false);
   const tutorialSteps: TourStep[] = [
@@ -122,10 +125,12 @@ export default function Home() {
   };
 
   function cleanupStreams() {
-    try {
-      progressRef.current?.close();
-    } catch {
-      // ignore
+    const unsub = progressRef.current?.unsubscribe;
+    progressRef.current = null;
+    if (typeof unsub === "function") {
+      Promise.resolve()
+        .then(() => unsub())
+        .catch(() => {});
     }
   }
 
@@ -142,12 +147,7 @@ export default function Home() {
       setChatInput("");
       setHasInteracted(false);
 
-      const res = await fetch(`${BACKEND_URL}/threads`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ learning_mode: mode }),
-      });
-      const data = await res.json();
+      const data = await requireThreadsApi().create({ learning_mode: mode });
 
       if (typeof data?.threadId === "string") {
         setThreadId(data.threadId);
@@ -183,11 +183,7 @@ export default function Home() {
       setChatInput("");
       setHasInteracted(false);
 
-      const res = await fetch(`${BACKEND_URL}/threads/${existingSessionId}`);
-      if (!res.ok) {
-        throw new Error(`Failed to load thread (${res.status})`);
-      }
-      const data = await res.json();
+      const data = await requireThreadsApi().get({ threadId: existingSessionId });
 
       const mode: LearningMode = data?.learning_mode === "guided" ? "guided" : "practice";
       setLearningMode(mode);
@@ -223,13 +219,7 @@ export default function Home() {
     setHistoryLoading(true);
     setHistoryError(null);
     try {
-      const res = await fetch(`${BACKEND_URL}/threads?limit=${encodeURIComponent(String(limit))}`);
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data?.error || "Failed to load chat history");
-      }
-
+      const data = await requireThreadsApi().list({ limit });
       setThreadHistory(Array.isArray(data?.threads) ? data.threads : []);
     } catch (e: any) {
       setHistoryError(e?.message ?? "Failed to load chat history");
@@ -322,12 +312,7 @@ export default function Home() {
     setChatLoading(true);
 
     try {
-      const res = await fetch(`${BACKEND_URL}/threads/${threadId}/messages`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: normalized.value }),
-      });
-      const data = await res.json();
+      const data = await requireThreadsApi().postMessage({ threadId, message: normalized.value });
 
       interpretResponse(data);
 
@@ -389,34 +374,20 @@ export default function Home() {
       // Open structured progress stream (no prompts, no reasoning, no logs).
       setProgress(null);
       setProgressHint(null);
-      try {
-        progressRef.current?.close();
-      } catch {
-        // ignore
-      }
 
-      const es = new EventSource(`${BACKEND_URL}/threads/${threadId}/generate/stream`);
-      progressRef.current = es;
+      const hintTimer = window.setTimeout(() => setProgressHint("Progress stream unavailable."), 1200);
 
-      const hintTimer = window.setTimeout(() => {
-        setProgressHint("Progress stream unavailable.");
-      }, 1200);
-
-      es.onmessage = (msg) => {
-        try {
-          const payload = JSON.parse(msg.data) as any;
-          if (payload?.event === "progress.ready") {
-            window.clearTimeout(hintTimer);
-            return;
-          }
-
-          const ev = payload as GenerationProgressEvent;
-          if (!ev || typeof ev.type !== "string") return;
+      const sub = await requireThreadsApi().subscribeGeneration({
+        threadId,
+        onEvent: (ev: unknown) => {
           window.clearTimeout(hintTimer);
+        try {
+          if (!ev || typeof (ev as any).type !== "string") return;
+          const typed = ev as GenerationProgressEvent;
 
           setProgress((prev) => {
-            if (ev.type === "generation_started") {
-              const total = Math.max(1, ev.totalSlots ?? ev.totalProblems ?? 1);
+            if (typed.type === "generation_started") {
+              const total = Math.max(1, typed.totalSlots ?? typed.totalProblems ?? 1);
               const slots: SlotProgress[] = Array.from({ length: total }, () => ({
                 stage: "queued",
                 attempt: 0,
@@ -426,7 +397,7 @@ export default function Home() {
                 stageDone: { llm: false, contract: false, docker: false },
                 lastFailure: null,
               }));
-              return { totalSlots: total, run: ev.run ?? 1, slots, error: null, lastHeartbeatTs: null };
+              return { totalSlots: total, run: typed.run ?? 1, slots, error: null, lastHeartbeatTs: null };
             }
 
             if (!prev) return prev;
@@ -440,40 +411,40 @@ export default function Home() {
               })),
             };
 
-            if (ev.type === "heartbeat") {
-              next.lastHeartbeatTs = ev.ts;
+            if (typed.type === "heartbeat") {
+              next.lastHeartbeatTs = typed.ts;
               return next;
             }
 
             const getSlot = (slotIndex: number) => next.slots[slotIndex];
 
-            if (ev.type === "slot_started") {
-              const p = getSlot(ev.slotIndex);
+            if (typed.type === "slot_started") {
+              const p = getSlot(typed.slotIndex);
               if (p) {
-                p.difficulty = ev.difficulty;
-                p.topic = ev.topic;
-                p.language = ev.language;
+                p.difficulty = typed.difficulty;
+                p.topic = typed.topic;
+                p.language = typed.language;
                 if (p.stage === "queued") p.stage = "llm";
               }
               return next;
             }
 
-            if (ev.type === "slot_llm_attempt_started") {
-              const p = getSlot(ev.slotIndex);
+            if (typed.type === "slot_llm_attempt_started") {
+              const p = getSlot(typed.slotIndex);
               if (p) {
                 p.stage = "llm";
-                p.attempt = ev.attempt;
+                p.attempt = typed.attempt;
                 p.stageDone = { llm: false, contract: false, docker: false };
                 p.lastFailure = null;
               }
               return next;
             }
 
-            if (ev.type === "slot_contract_validated") {
-              const p = getSlot(ev.slotIndex);
+            if (typed.type === "slot_contract_validated") {
+              const p = getSlot(typed.slotIndex);
               if (p) {
                 p.stage = "docker";
-                p.attempt = ev.attempt;
+                p.attempt = typed.attempt;
                 p.stageDone.llm = true;
                 p.stageDone.contract = true;
                 p.lastFailure = null;
@@ -481,21 +452,21 @@ export default function Home() {
               return next;
             }
 
-            if (ev.type === "slot_contract_failed") {
-              const p = getSlot(ev.slotIndex);
+            if (typed.type === "slot_contract_failed") {
+              const p = getSlot(typed.slotIndex);
               if (p) {
                 p.stage = "contract";
-                p.attempt = ev.attempt;
-                p.lastFailure = { stage: "contract", message: ev.shortError };
+                p.attempt = typed.attempt;
+                p.lastFailure = { stage: "contract", message: typed.shortError };
               }
               return next;
             }
 
-            if (ev.type === "slot_docker_validation_started") {
-              const p = getSlot(ev.slotIndex);
+            if (typed.type === "slot_docker_validation_started") {
+              const p = getSlot(typed.slotIndex);
               if (p) {
                 p.stage = "docker";
-                p.attempt = ev.attempt;
+                p.attempt = typed.attempt;
                 p.stageDone.llm = true;
                 p.stageDone.contract = true;
                 p.lastFailure = null;
@@ -503,18 +474,18 @@ export default function Home() {
               return next;
             }
 
-            if (ev.type === "slot_docker_validation_failed") {
-              const p = getSlot(ev.slotIndex);
+            if (typed.type === "slot_docker_validation_failed") {
+              const p = getSlot(typed.slotIndex);
               if (p) {
                 p.stage = "docker";
-                p.attempt = ev.attempt;
-                p.lastFailure = { stage: "docker", message: ev.shortError };
+                p.attempt = typed.attempt;
+                p.lastFailure = { stage: "docker", message: typed.shortError };
               }
               return next;
             }
 
-            if (ev.type === "slot_completed") {
-              const p = getSlot(ev.slotIndex);
+            if (typed.type === "slot_completed") {
+              const p = getSlot(typed.slotIndex);
               if (p) {
                 p.stage = "done";
                 p.stageDone = { llm: true, contract: true, docker: true };
@@ -523,10 +494,10 @@ export default function Home() {
               return next;
             }
 
-            if (ev.type === "problem_started") {
-              const p = getSlot(ev.index);
+            if (typed.type === "problem_started") {
+              const p = getSlot(typed.index);
               if (p) {
-                p.difficulty = ev.difficulty;
+                p.difficulty = typed.difficulty;
                 p.stage = "llm";
                 p.attempt = 0;
                 p.stageDone = { llm: false, contract: false, docker: false };
@@ -535,22 +506,22 @@ export default function Home() {
               return next;
             }
 
-            if (ev.type === "attempt_started") {
-              const p = getSlot(ev.index);
+            if (typed.type === "attempt_started") {
+              const p = getSlot(typed.index);
               if (p) {
                 p.stage = "llm";
-                p.attempt = ev.attempt;
+                p.attempt = typed.attempt;
                 p.stageDone = { llm: false, contract: false, docker: false };
                 p.lastFailure = null;
               }
               return next;
             }
 
-            if (ev.type === "validation_started") {
-              const p = getSlot(ev.index);
+            if (typed.type === "validation_started") {
+              const p = getSlot(typed.index);
               if (p) {
                 p.stage = "docker";
-                p.attempt = ev.attempt;
+                p.attempt = typed.attempt;
                 p.stageDone.llm = true;
                 p.stageDone.contract = true;
                 p.lastFailure = null;
@@ -558,30 +529,30 @@ export default function Home() {
               return next;
             }
 
-            if (ev.type === "validation_failed") {
-              const p = getSlot(ev.index);
+            if (typed.type === "validation_failed") {
+              const p = getSlot(typed.index);
               if (p) {
                 p.stage = "docker";
-                p.attempt = ev.attempt;
+                p.attempt = typed.attempt;
                 p.lastFailure = { stage: "docker", message: "Docker validation failed." };
               }
               return next;
             }
 
-            if (ev.type === "attempt_failed") {
-              const p = getSlot(ev.index);
+            if (typed.type === "attempt_failed") {
+              const p = getSlot(typed.index);
               if (p) {
-                p.attempt = ev.attempt;
+                p.attempt = typed.attempt;
                 p.lastFailure =
-                  ev.phase === "validate"
+                  typed.phase === "validate"
                     ? { stage: "docker", message: "Docker validation failed." }
                     : { stage: "contract", message: "Contract validation failed." };
               }
               return next;
             }
 
-            if (ev.type === "problem_validated") {
-              const p = getSlot(ev.index);
+            if (typed.type === "problem_validated") {
+              const p = getSlot(typed.index);
               if (p) {
                 p.stage = "done";
                 p.stageDone = { llm: true, contract: true, docker: true };
@@ -590,16 +561,16 @@ export default function Home() {
               return next;
             }
 
-            if (ev.type === "problem_failed") {
-              const p = getSlot(ev.index);
+            if (typed.type === "problem_failed") {
+              const p = getSlot(typed.index);
               if (p) p.stage = "failed";
               return next;
             }
 
-            if (ev.type === "generation_failed") {
-              next.error = ev.error || "Generation failed.";
-              if (typeof ev.slotIndex === "number") {
-                const p = getSlot(ev.slotIndex);
+            if (typed.type === "generation_failed") {
+              next.error = typed.error || "Generation failed.";
+              if (typeof typed.slotIndex === "number") {
+                const p = getSlot(typed.slotIndex);
                 if (p && p.stage !== "done") p.stage = "failed";
               } else {
                 for (const p of next.slots) {
@@ -614,28 +585,17 @@ export default function Home() {
         } catch {
           // ignore parse errors
         }
-      };
-
-      es.onerror = () => {
-        window.clearTimeout(hintTimer);
-        setProgressHint((prev) => prev ?? "Progress stream disconnected.");
-        try {
-          es.close();
-        } catch {
-          // ignore
-        }
-      };
-
-      const res = await fetch(`${BACKEND_URL}/threads/${threadId}/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        },
       });
+      progressRef.current = { unsubscribe: sub.unsubscribe };
 
-      const data = await res.json();
+      const data = await requireThreadsApi().generate({ threadId });
+      window.clearTimeout(hintTimer);
 
       if (typeof data.activityId === "string") {
         try {
-          progressRef.current?.close();
+          await progressRef.current?.unsubscribe?.();
+          progressRef.current = null;
         } catch {
           // ignore
         }
@@ -662,7 +622,8 @@ export default function Home() {
       ]);
     } finally {
       try {
-        progressRef.current?.close();
+        await progressRef.current?.unsubscribe?.();
+        progressRef.current = null;
       } catch {
         // ignore
       }

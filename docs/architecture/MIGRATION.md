@@ -26,6 +26,11 @@ Transitional → final:
   - backend ports/health checks/backend URLs
   - Express routes and SSE adapters (delete once all call sites use IPC)
 
+Status (as of 2026-02-07):
+- UI call sites migrated to IPC (no `fetch()`/`EventSource` to engine).
+- Engine boots via IPC (no backend port/health).
+- Remaining: delete Express/SSE server code from `apps/backend`.
+
 ## Phase 3 (Next): Renderer Build Embedded in App
 
 - Stop relying on `next dev` + `nodemon` child processes in dev-like mode.

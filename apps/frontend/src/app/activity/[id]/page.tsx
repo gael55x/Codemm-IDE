@@ -85,8 +85,17 @@ type RunResult = {
 
 type CodeFiles = Record<string, string>;
 
-const BACKEND_URL =
-  process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
+function requireActivitiesApi() {
+  const api = (window as any)?.codemm?.activities;
+  if (!api) throw new Error("IDE bridge unavailable. Launch this UI inside Codemm-IDE.");
+  return api;
+}
+
+function requireJudgeApi() {
+  const api = (window as any)?.codemm?.judge;
+  if (!api) throw new Error("IDE bridge unavailable. Launch this UI inside Codemm-IDE.");
+  return api;
+}
 
 function getProblemLanguage(p: Problem | null | undefined): LanguageId {
   if (p?.language === "python") return "python";
@@ -529,16 +538,14 @@ export default function ActivityPage() {
     async function load() {
       try {
         setLoadError(null);
-        const res = await fetch(`${BACKEND_URL}/activities/${activityId}`);
-
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          setLoadError(data?.error || "Failed to load activity.");
+        const data = await requireActivitiesApi().get({ id: activityId });
+        const act = data?.activity as Activity | undefined;
+        if (!act) {
+          setLoadError("Activity not found.");
           return;
         }
-        const act = data.activity as Activity | undefined;
-        if (act) {
-          setActivity(act);
+
+        setActivity(act);
           if (act.problems.length > 0) {
             const first = act.problems[0];
             setSelectedProblemId(first.id);
@@ -556,7 +563,6 @@ export default function ActivityPage() {
             setTimerSeconds(0);
             setIsTimerRunning(false);
           }
-        }
       } catch (e) {
         console.error(e);
         setLoadError("Failed to load activity.");
@@ -667,32 +673,12 @@ export default function ActivityPage() {
     try {
       const sampleIns = selectedProblem.sample_inputs || selectedProblem.sampleInputs || [];
       const stdin = sampleIns.length > 0 ? String(sampleIns[0]) : undefined;
-      const res = await fetch(`${BACKEND_URL}/run`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const data = await requireJudgeApi().run({
           files,
           ...(selectedLanguage === "java" ? { mainClass: entrypointClass || "Main" } : {}),
           ...(typeof stdin === "string" ? { stdin } : {}),
           language: selectedLanguage,
-        }),
       });
-
-      let data: any = null;
-      try {
-        data = await res.json();
-      } catch (parseErr) {
-        data = null;
-      }
-
-      if (!res.ok) {
-        const message =
-          (data && typeof data.error === "string" && data.error) ||
-          (data && typeof data.detail === "string" && data.detail) ||
-          `Failed to run code (HTTP ${res.status}).`;
-        setResult({ stdout: "", stderr: message });
-        return;
-      }
 
       if (!data || typeof data !== "object") {
         setResult({ stdout: "", stderr: "Failed to run code (invalid response)." });
@@ -725,8 +711,6 @@ export default function ActivityPage() {
     if (!selectedProblem) return;
     setSubmitting(true);
     try {
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-
       const testSuite = selectedProblem.test_suite || selectedProblem.testSuite || "";
       const filesForTests = Object.fromEntries(
         Object.entries(files).filter(([filename]) => {
@@ -737,39 +721,13 @@ export default function ActivityPage() {
         })
       );
 
-      const res = await fetch(`${BACKEND_URL}/submit`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          files: filesForTests,
-          testSuite,
-          activityId,
-          problemId: selectedProblem.id,
-          language: selectedLanguage,
-        }),
+      const data = await requireJudgeApi().submit({
+        files: filesForTests,
+        testSuite,
+        activityId,
+        problemId: selectedProblem.id,
+        language: selectedLanguage,
       });
-
-      let data: any = null;
-      try {
-        data = await res.json();
-      } catch (parseErr) {
-        console.error("Failed to parse judge response JSON:", parseErr);
-      }
-
-      if (!res.ok || !data || typeof data !== "object") {
-        setResult({
-          success: false,
-          passedTests: [],
-          failedTests: [],
-          stdout: "",
-          stderr:
-            (data && typeof data.error === "string" && data.error) ||
-            "Failed to run judge. Please try again.",
-          executionTimeMs: 0,
-        });
-        setIsTimerRunning(false);
-        return;
-      }
 
       const safeResult: JudgeResult = {
         success: Boolean(data.success),

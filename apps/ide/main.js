@@ -1,13 +1,12 @@
 /* eslint-disable no-console */
 const { app, BrowserWindow, dialog, shell, ipcMain, safeStorage } = require("electron");
-const { spawn, spawnSync } = require("child_process");
+const { fork, spawn, spawnSync } = require("child_process");
 const crypto = require("crypto");
 const fs = require("fs");
 const http = require("http");
 const os = require("os");
 const path = require("path");
 
-const DEFAULT_BACKEND_PORT = Number.parseInt(process.env.CODEMM_BACKEND_PORT || "4000", 10);
 const DEFAULT_FRONTEND_PORT = Number.parseInt(process.env.CODEMM_FRONTEND_PORT || "3000", 10);
 
 // Keep a global reference so the window isn't garbage-collected on macOS.
@@ -15,6 +14,7 @@ const DEFAULT_FRONTEND_PORT = Number.parseInt(process.env.CODEMM_FRONTEND_PORT |
 let mainWindow = null;
 let ipcWired = false;
 let currentWorkspace = null; // { workspaceDir, workspaceDataDir, backendDbPath, userDataDir }
+let engine = null; // { proc, call, onEvent, shutdown }
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
@@ -291,6 +291,94 @@ function wireLogs(name, proc) {
   proc.stderr?.on("data", (buf) => process.stderr.write(`[${name}] ${buf}`));
 }
 
+function isObject(x) {
+  return Boolean(x) && typeof x === "object" && !Array.isArray(x);
+}
+
+function startEngineIpc({ backendDir, env, onEvent }) {
+  const entry = path.join(backendDir, "ipc-server.js");
+  if (!fs.existsSync(entry)) {
+    throw new Error(`Engine IPC entry not found: ${entry}`);
+  }
+
+  const proc = fork(entry, [], {
+    cwd: backendDir,
+    env,
+    detached: true,
+    silent: true,
+    stdio: ["ignore", "pipe", "pipe", "ipc"],
+  });
+  wireLogs("engine", proc);
+
+  const pending = new Map();
+
+  const rejectAll = (reason) => {
+    for (const { reject, timeout } of pending.values()) {
+      clearTimeout(timeout);
+      reject(reason);
+    }
+    pending.clear();
+  };
+
+  proc.on("message", (raw) => {
+    if (!isObject(raw)) return;
+    if (raw.type === "res" && typeof raw.id === "string") {
+      const p = pending.get(raw.id);
+      if (!p) return;
+      pending.delete(raw.id);
+      clearTimeout(p.timeout);
+      if (raw.ok === true) p.resolve(raw.result);
+      else p.reject(new Error(raw?.error?.message || "Engine error."));
+      return;
+    }
+    if (raw.type === "event") {
+      try {
+        onEvent(raw);
+      } catch {
+        // ignore
+      }
+    }
+  });
+
+  proc.on("exit", (code) => {
+    rejectAll(new Error(`Engine exited (code=${code ?? "unknown"}).`));
+  });
+  proc.on("error", (err) => {
+    rejectAll(err instanceof Error ? err : new Error(String(err)));
+  });
+
+  function call(method, params) {
+    if (!proc || !proc.connected) {
+      return Promise.reject(new Error("Engine not connected."));
+    }
+    const id = crypto.randomUUID();
+    const timeout = setTimeout(() => {
+      const p = pending.get(id);
+      if (!p) return;
+      pending.delete(id);
+      p.reject(new Error(`Engine RPC timed out for method "${method}".`));
+    }, 120_000);
+
+    const p = new Promise((resolve, reject) => {
+      pending.set(id, { resolve, reject, timeout });
+    });
+    proc.send({ id, type: "req", method, params: params ?? {} });
+    return p;
+  }
+
+  function shutdown() {
+    rejectAll(new Error("Engine shutdown."));
+    killProcessTree(proc);
+  }
+
+  return { proc, call, shutdown };
+}
+
+function requireEngine() {
+  if (!engine) throw new Error("Engine unavailable. Restart the IDE.");
+  return engine;
+}
+
 async function ensureNodeModules({ dir, label, env }) {
   const nm = path.join(dir, "node_modules");
   if (fs.existsSync(nm)) {
@@ -489,11 +577,99 @@ async function createWindowAndBoot() {
       }).catch(() => {});
       return { ok: true };
     });
+
+    const reqString = (v, name) => {
+      const s = typeof v === "string" ? v.trim() : "";
+      if (!s) throw new Error(`${name} is required.`);
+      return s;
+    };
+
+    const engineCall = (method, params) => requireEngine().call(method, params);
+
+    // Threads (local-only; no HTTP boundary).
+    ipcMain.handle("codemm:threads:create", async (_evt, args) => {
+      const learning_mode = args && typeof args.learning_mode === "string" ? args.learning_mode : null;
+      return engineCall("threads.create", { ...(learning_mode ? { learning_mode } : {}) });
+    });
+
+    ipcMain.handle("codemm:threads:list", async (_evt, args) => {
+      const limit =
+        args && typeof args.limit === "number" && Number.isFinite(args.limit) ? Math.max(1, Math.min(200, Math.trunc(args.limit))) : 30;
+      return engineCall("threads.list", { limit });
+    });
+
+    ipcMain.handle("codemm:threads:get", async (_evt, args) => {
+      const threadId = reqString(args?.threadId, "threadId");
+      return engineCall("threads.get", { threadId });
+    });
+
+    ipcMain.handle("codemm:threads:postMessage", async (_evt, args) => {
+      const threadId = reqString(args?.threadId, "threadId");
+      const message = reqString(args?.message, "message");
+      if (message.length > 50_000) throw new Error("message is too large.");
+      return engineCall("threads.postMessage", { threadId, message });
+    });
+
+    ipcMain.handle("codemm:threads:generate", async (_evt, args) => {
+      const threadId = reqString(args?.threadId, "threadId");
+      return engineCall("threads.generate", { threadId });
+    });
+
+    ipcMain.handle("codemm:threads:subscribeGeneration", async (_evt, args) => {
+      const threadId = reqString(args?.threadId, "threadId");
+      return engineCall("threads.subscribeGeneration", { threadId });
+    });
+
+    ipcMain.handle("codemm:threads:unsubscribeGeneration", async (_evt, args) => {
+      const subId = reqString(args?.subId, "subId");
+      return engineCall("threads.unsubscribeGeneration", { subId });
+    });
+
+    // Activities
+    ipcMain.handle("codemm:activities:get", async (_evt, args) => {
+      const id = reqString(args?.id, "id");
+      return engineCall("activities.get", { id });
+    });
+
+    ipcMain.handle("codemm:activities:patch", async (_evt, args) => {
+      const id = reqString(args?.id, "id");
+      const title = typeof args?.title === "string" ? args.title : undefined;
+      const timeLimitSeconds =
+        typeof args?.timeLimitSeconds === "number" && Number.isFinite(args.timeLimitSeconds)
+          ? Math.max(0, Math.min(8 * 60 * 60, Math.trunc(args.timeLimitSeconds)))
+          : args?.timeLimitSeconds === null
+            ? null
+            : undefined;
+      return engineCall("activities.patch", { id, ...(typeof title !== "undefined" ? { title } : {}), ...(typeof timeLimitSeconds !== "undefined" ? { timeLimitSeconds } : {}) });
+    });
+
+    ipcMain.handle("codemm:activities:publish", async (_evt, args) => {
+      const id = reqString(args?.id, "id");
+      return engineCall("activities.publish", { id });
+    });
+
+    ipcMain.handle("codemm:activities:aiEdit", async (_evt, args) => {
+      const id = reqString(args?.id, "id");
+      const problemId = reqString(args?.problemId, "problemId");
+      const instruction = reqString(args?.instruction, "instruction");
+      if (instruction.length > 8_000) throw new Error("instruction is too large.");
+      return engineCall("activities.aiEdit", { id, problemId, instruction });
+    });
+
+    // Judge (Docker-backed)
+    ipcMain.handle("codemm:judge:run", async (_evt, args) => {
+      if (!isObject(args)) throw new Error("Invalid args.");
+      // Pass-through; engine performs validation and Docker sandboxing.
+      return engineCall("judge.run", args);
+    });
+
+    ipcMain.handle("codemm:judge:submit", async (_evt, args) => {
+      if (!isObject(args)) throw new Error("Invalid args.");
+      return engineCall("judge.submit", args);
+    });
   }
 
-  const backendUrl = `http://127.0.0.1:${DEFAULT_BACKEND_PORT}`;
   const frontendUrl = `http://127.0.0.1:${DEFAULT_FRONTEND_PORT}`;
-  console.log(`[ide] backendUrl=${backendUrl}`);
   console.log(`[ide] frontendUrl=${frontendUrl}`);
 
   const win = new BrowserWindow({
@@ -567,15 +743,15 @@ async function createWindowAndBoot() {
           <div class="card">
             <h1>Starting Codemm-IDE…</h1>
             <div class="muted">
-              Booting backend (agent + judge) and frontend UI locally.
+              Booting engine (agent + judge) and frontend UI locally.
               Docker is required for judging.
             </div>
             <div class="row muted">
               <div class="dot"></div>
-              <div>Backend: <span class="mono">${backendUrl}</span> · Frontend: <span class="mono">${frontendUrl}</span></div>
+              <div>Engine: <span class="mono">local IPC</span> · Frontend: <span class="mono">${frontendUrl}</span></div>
             </div>
             <div class="muted" style="margin-top: 14px;">
-              If this hangs, check the terminal logs for missing deps or port conflicts.
+              If this hangs, check the terminal logs for missing deps.
             </div>
           </div>
         </body>
@@ -635,54 +811,58 @@ async function createWindowAndBoot() {
     }
   }
 
-  // Start backend (workspace).
-  console.log("[ide] Starting backend (workspace codem-backend)...");
+  // Start engine (workspace).
+  console.log("[ide] Starting engine (IPC)...");
   const backendDbPath =
     typeof baseEnv.CODEMM_DB_PATH === "string" && baseEnv.CODEMM_DB_PATH.trim()
       ? baseEnv.CODEMM_DB_PATH.trim()
       : currentWorkspace.backendDbPath;
 
-  backendProc = spawn("npm", ["--workspace", "codem-backend", "run", "dev"], {
-    cwd: repoRoot,
+  backendProc = startEngineIpc({
+    backendDir,
     env: {
       ...baseEnv,
-      PORT: String(DEFAULT_BACKEND_PORT),
-      // Avoid a noisy welcome prompt in packaging contexts.
-      CODEMM_HTTP_LOG: baseEnv.CODEMM_HTTP_LOG || "0",
       CODEMM_DB_PATH: backendDbPath,
       CODEMM_WORKSPACE_DIR: currentWorkspace.workspaceDir,
     },
-    detached: true,
-    stdio: ["ignore", "pipe", "pipe"],
+    onEvent: (evt) => {
+      if (!evt || typeof evt.topic !== "string") return;
+      if (evt.topic === "threads.generation") {
+        try {
+          mainWindow?.webContents?.send("codemm:threads:generationEvent", evt.payload);
+        } catch {
+          // ignore
+        }
+      }
+    },
   });
-  wireLogs("backend", backendProc);
-  backendProc.on("error", (err) => {
-    dialog.showErrorBox("Backend Failed To Start", String(err?.message || err));
+  engine = backendProc;
+
+  backendProc.proc.on("error", (err) => {
+    dialog.showErrorBox("Engine Failed To Start", String(err?.message || err));
     app.quit();
   });
 
-  backendProc.on("exit", (code) => {
+  backendProc.proc.on("exit", (code) => {
     if (!app.isQuiting) {
       dialog.showErrorBox(
-        "Backend Exited",
-        `Codemm backend exited unexpectedly (code=${code ?? "unknown"}). Check terminal logs.`,
+        "Engine Exited",
+        `Codemm engine exited unexpectedly (code=${code ?? "unknown"}). Check terminal logs.`,
       );
       app.quit();
     }
   });
 
-  console.log(`[ide] Waiting for backend health: ${backendUrl}/health`);
-  const backendReady = await waitForHttpOk(`${backendUrl}/health`, { timeoutMs: 180_000 });
-  if (!backendReady) {
-    dialog.showErrorBox(
-      "Backend Failed To Start",
-      `Backend did not become ready at ${backendUrl}/health within timeout.`,
-    );
-    killProcessTree(backendProc);
+  // Quick connectivity check (no ports/health endpoints).
+  try {
+    await backendProc.call("engine.ping", {});
+    console.log("[ide] Engine is ready (IPC)");
+  } catch (err) {
+    dialog.showErrorBox("Engine Failed To Start", String(err?.message || err));
+    backendProc.shutdown();
     app.quit();
     return;
   }
-  console.log("[ide] Backend is ready");
 
   // Start frontend dev server (workspace).
   console.log("[ide] Starting frontend (workspace codem-frontend)...");
@@ -691,7 +871,6 @@ async function createWindowAndBoot() {
     env: {
       ...baseEnv,
       PORT: String(DEFAULT_FRONTEND_PORT),
-      NEXT_PUBLIC_BACKEND_URL: backendUrl,
       NEXT_TELEMETRY_DISABLED: "1",
     },
     detached: true,
@@ -721,7 +900,11 @@ async function createWindowAndBoot() {
       `Frontend did not become ready at ${frontendUrl} within timeout.`,
     );
     killProcessTree(frontendProc);
-    killProcessTree(backendProc);
+    try {
+      backendProc?.shutdown?.();
+    } catch {
+      killProcessTree(backendProc?.proc);
+    }
     app.quit();
     return;
   }
@@ -731,7 +914,11 @@ async function createWindowAndBoot() {
 
   const cleanup = () => {
     killProcessTree(frontendProc);
-    killProcessTree(backendProc);
+    try {
+      backendProc?.shutdown?.();
+    } catch {
+      killProcessTree(backendProc?.proc);
+    }
   };
 
   app.on("before-quit", () => {
@@ -762,7 +949,7 @@ process.on("unhandledRejection", (err) => {
 });
 
 app.whenReady().then(() => {
-  console.log("[ide] Electron ready. Booting backend + frontend...");
+  console.log("[ide] Electron ready. Booting engine + frontend...");
   return createWindowAndBoot();
 });
 

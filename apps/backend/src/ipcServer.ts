@@ -83,6 +83,10 @@ function makeSubId(): string {
 }
 
 async function handle(method: string, paramsRaw: unknown): Promise<unknown> {
+  if (method === "engine.ping") {
+    return { ok: true };
+  }
+
   if (method === "threads.create") {
     const params = requireParams(paramsRaw);
     const learning_mode = (params.learning_mode ?? null) as LearningMode | null;

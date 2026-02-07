@@ -23,7 +23,11 @@ type Activity = {
   timeLimitSeconds?: number | null;
 };
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
+function requireActivitiesApi() {
+  const api = (window as any)?.codemm?.activities;
+  if (!api) throw new Error("IDE bridge unavailable. Launch this UI inside Codemm-IDE.");
+  return api;
+}
 
 function clampInt(n: number, min: number, max: number): number {
   if (!Number.isFinite(n)) return min;
@@ -107,12 +111,7 @@ export default function ActivityReviewPage() {
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch(`${BACKEND_URL}/activities/${activityId}`);
-        const data = await res.json().catch(() => ({}));
-
-        if (!res.ok) {
-          throw new Error(data?.error || `Failed to load activity (${res.status})`);
-        }
+        const data = await requireActivitiesApi().get({ id: activityId });
 
         const act = data?.activity as Activity | undefined;
         if (!act) throw new Error("Failed to load activity.");
@@ -140,20 +139,11 @@ export default function ActivityReviewPage() {
     setSaving(true);
     setToast(null);
     try {
-      const res = await fetch(`${BACKEND_URL}/activities/${activityId}`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          title: title.trim() || "Untitled activity",
-          timeLimitSeconds,
-        }),
+      const data = await requireActivitiesApi().patch({
+        id: activityId,
+        title: title.trim() || "Untitled activity",
+        timeLimitSeconds,
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data?.error || `Failed to save (${res.status})`);
-      }
       const act = data?.activity as Activity | undefined;
       if (act) setActivity(act);
       setToast("Saved.");
@@ -169,13 +159,7 @@ export default function ActivityReviewPage() {
     try {
       await saveDraft();
 
-      const res = await fetch(`${BACKEND_URL}/activities/${activityId}/publish`, {
-        method: "POST",
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data?.error || `Failed to publish (${res.status})`);
-      }
+      await requireActivitiesApi().publish({ id: activityId });
 
       setActivity((prev) => (prev ? { ...prev, status: "PUBLISHED" } : prev));
       setToast("Published. You can share the link now.");
@@ -207,17 +191,7 @@ export default function ActivityReviewPage() {
     setEditError(null);
     setToast(null);
     try {
-      const res = await fetch(`${BACKEND_URL}/activities/${activityId}/problems/${problemId}/ai-edit`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ instruction }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data?.error || `Failed to edit problem (${res.status})`);
-      }
+      const data = await requireActivitiesApi().aiEdit({ id: activityId, problemId, instruction });
 
       const act = data?.activity as Activity | undefined;
       if (act) {
