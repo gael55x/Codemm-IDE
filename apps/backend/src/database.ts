@@ -122,7 +122,7 @@ export function initializeDatabase() {
       commitments_json TEXT,
       generation_outcomes_json TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
       -- no foreign keys: local-only store
     )
   `);
@@ -180,7 +180,7 @@ export function initializeDatabase() {
       problems TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'DRAFT',
       time_limit_seconds INTEGER,
-      created_at TEXT NOT NULL,
+      created_at TEXT NOT NULL
       -- no foreign keys: local-only store
     )
   `);
