@@ -22,7 +22,7 @@ Workspace (folder)
 
 ## Runtime Topology
 
-Current (transitional):
+Current:
 
 - **Electron main** (`apps/ide/main.js`)
   - selects workspace folder
@@ -30,14 +30,15 @@ Current (transitional):
   - starts local engine + UI as child processes (dev mode)
 - **Local engine** (`apps/backend`)
   - deterministic agent loop + Docker judge + SQLite persistence
-  - exposes HTTP endpoints on `127.0.0.1` for the UI (temporary)
+  - exposes an in-process RPC surface via Node IPC (`fork` + `process.send`)
 - **Renderer UI** (`apps/frontend`)
   - renders threads/activities
-  - calls the local engine for thread operations and judging
+  - calls the local engine via `window.codemm.*` (preload IPC allowlist)
 
 Target (final):
 
-- Renderer talks to core via **IPC / in-process APIs** (no HTTP/Express/SSE boundary).
+- Embed the frontend build inside the `.app` bundle (remove the Next dev server in dev-like mode).
+- Optionally run the engine in-process in Electron main if it stays deterministic and debuggable.
 
 ## Local State Ownership & Persistence
 
@@ -52,7 +53,6 @@ Target (final):
 - “Sessions” are not server resources. They are **local threads** scoped to a workspace.
 - Transitional compatibility:
   - the engine still uses a legacy table name (`sessions`) for storage
-  - the engine mounts **`/threads`** and keeps **`/sessions`** as a temporary alias
 
 ## API Key Handling & Scoping
 
@@ -69,4 +69,3 @@ Target (final):
 - Auth routes (`/auth/*`), JWTs, users table, passwords.
 - Profile routes (`/profile*`) and per-user settings stored in SQLite.
 - Community routes (`/community/*`) and community publish/unpublish behavior.
-
