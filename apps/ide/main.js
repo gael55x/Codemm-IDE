@@ -296,6 +296,21 @@ function isObject(x) {
   return Boolean(x) && typeof x === "object" && !Array.isArray(x);
 }
 
+function resolveNodeBin() {
+  const override = typeof process.env.CODEMM_NODE_BIN === "string" ? process.env.CODEMM_NODE_BIN.trim() : "";
+  return override || "node";
+}
+
+function spawnSystemNode(scriptPath, args, { cwd, env, stdio }) {
+  const nodeBin = resolveNodeBin();
+  return spawn(nodeBin, [scriptPath, ...(args || [])], {
+    cwd,
+    env,
+    detached: true,
+    stdio,
+  });
+}
+
 function spawnNodeWithElectron(scriptPath, args, { cwd, env, stdio }) {
   return spawn(process.execPath, [scriptPath, ...(args || [])], {
     cwd,
@@ -311,7 +326,7 @@ function startEngineIpc({ backendDir, env, onEvent }) {
     throw new Error(`Engine IPC entry not found: ${entry}`);
   }
 
-  const proc = spawnNodeWithElectron(entry, [], {
+  const proc = (app.isPackaged ? spawnNodeWithElectron : spawnSystemNode)(entry, [], {
     cwd: backendDir,
     env,
     stdio: ["ignore", "pipe", "pipe", "ipc"],
@@ -876,6 +891,9 @@ async function createWindowAndBoot() {
 
   // Start engine (workspace).
   console.log("[ide] Starting engine (IPC)...");
+  if (!app.isPackaged) {
+    console.log(`[ide] Engine nodeBin=${resolveNodeBin()}`);
+  }
   const engineDbPath =
     typeof baseEnv.CODEMM_DB_PATH === "string" && baseEnv.CODEMM_DB_PATH.trim()
       ? baseEnv.CODEMM_DB_PATH.trim()
@@ -950,7 +968,11 @@ async function createWindowAndBoot() {
       return;
     }
     console.log(`[ide] Starting frontend (standalone) on ${frontendUrl}...`);
-    frontendProc = spawnNodeWithElectron(standaloneServer, [], {
+    const spawnFrontend = app.isPackaged ? spawnNodeWithElectron : spawnSystemNode;
+    if (!app.isPackaged) {
+      console.log(`[ide] Frontend nodeBin=${resolveNodeBin()}`);
+    }
+    frontendProc = spawnFrontend(standaloneServer, [], {
       cwd: path.dirname(standaloneServer),
       env: {
         ...baseEnv,
