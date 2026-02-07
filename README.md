@@ -55,7 +55,17 @@ See `docs/FUNCTIONS.md`.
 
 ## Notes
 
-- This currently runs the frontend in Next.js dev mode via `npm run dev`. Packaging into a `.app` bundle is doable, but needs a follow-up to bundle/rebuild native deps (notably `better-sqlite3`) and to run Next in production mode.
+- Dev uses `next dev` for the UI by default.
+- Phase 3 packaging is in progress; the repo now includes an `electron-builder` config, but native module + bundling hardening may still need iteration (notably `better-sqlite3`).
+
+## Package (macOS)
+
+From `Codemm-IDE/`:
+
+```bash
+npm install
+npm run dist:mac
+```
 
 ## Packaging Path (What We'd Implement Next)
 

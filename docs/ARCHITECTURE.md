@@ -29,5 +29,5 @@ Core docs:
 Replace “child process calling `npm run dev`” with production builds embedded in the app bundle:
 
 - Backend: compiled `dist/` + bundled `node_modules` rebuilt for Electron.
-- Frontend: Next production output (recommended: `output: "standalone"`).
+- Frontend: Next production output (Phase 3: `output: "standalone"` with `.next/standalone/server.js`).
 - IDE: embed frontend build and eliminate the Next dev server.

@@ -1,0 +1,22 @@
+appId: com.codemm.ide
+productName: Codemm-IDE
+
+directories:
+  output: dist
+
+files:
+  - apps/**
+  - node_modules/**
+  - package.json
+  - "!**/.next/cache/**"
+  - "!**/node_modules/.cache/**"
+  - "!**/*.map"
+
+asar: true
+asarUnpack:
+  - "**/*.node"
+
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - dmg

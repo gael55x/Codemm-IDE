@@ -8,9 +8,11 @@ This document describes what the desktop wrapper does (and does not do).
 - Prompts for a workspace folder on first launch (and persists it).
 - Ensures monorepo dependencies are installed (`npm install` in repo root if `node_modules/` is missing).
 - Builds judge Docker images if missing (from `apps/backend/Dockerfile.*-judge`).
-- Starts the local engine (`apps/backend`) as a child process via Node IPC (`fork` → `apps/backend/ipc-server.js`).
+- Starts the local engine (`apps/backend`) as a child process via Node IPC (`spawn` with `ELECTRON_RUN_AS_NODE=1` → `apps/backend/ipc-server.js`).
 - Verifies engine connectivity via an IPC ping (no HTTP ports/health checks).
-- Starts `apps/frontend` as a child process (via npm workspaces).
+- Starts `apps/frontend` as a child process:
+  - dev: `next dev` via npm workspaces
+  - standalone: `apps/frontend/.next/standalone/server.js`
 - Waits for frontend readiness (default: `http://127.0.0.1:3000/`).
 - Opens the frontend URL inside an Electron `BrowserWindow`.
 - On app quit, terminates both child processes.
@@ -18,7 +20,7 @@ This document describes what the desktop wrapper does (and does not do).
 ## What It Does Not Do (Yet)
 
 - Package into a distributable `.app` bundle.
-- Run frontend/backend in production mode from inside the app bundle.
+- Run the frontend in production mode from inside the app bundle (Phase 3 in progress).
 - Embed a code editor different from what `Codemm-frontend` already provides.
 - Embed the frontend build inside the `.app` bundle (Phase 3).
 
@@ -27,6 +29,7 @@ This document describes what the desktop wrapper does (and does not do).
 - `CODEMM_FRONTEND_PORT` default `3000`
 - `CODEMM_BACKEND_DIR` default `apps/backend`
 - `CODEMM_FRONTEND_DIR` default `apps/frontend`
+- `CODEMM_FRONTEND_MODE=standalone` forces starting the built Next standalone server (instead of `next dev`) in dev.
 - `DOCKER_PATH` optional path to the `docker` binary (helps for GUI-launched apps with a limited PATH)
 - `CODEMM_REBUILD_JUDGE=1` forces rebuilding judge Docker images on launch
 - `CODEMM_WORKSPACE_DIR` optional workspace folder override (skips folder picker)

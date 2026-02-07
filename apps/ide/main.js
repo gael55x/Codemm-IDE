@@ -1,9 +1,10 @@
 /* eslint-disable no-console */
 const { app, BrowserWindow, dialog, shell, ipcMain, safeStorage } = require("electron");
-const { fork, spawn, spawnSync } = require("child_process");
+const { spawn, spawnSync } = require("child_process");
 const crypto = require("crypto");
 const fs = require("fs");
 const http = require("http");
+const net = require("net");
 const os = require("os");
 const path = require("path");
 
@@ -295,19 +296,27 @@ function isObject(x) {
   return Boolean(x) && typeof x === "object" && !Array.isArray(x);
 }
 
+function spawnNodeWithElectron(scriptPath, args, { cwd, env, stdio }) {
+  return spawn(process.execPath, [scriptPath, ...(args || [])], {
+    cwd,
+    env: { ...env, ELECTRON_RUN_AS_NODE: "1" },
+    detached: true,
+    stdio,
+  });
+}
+
 function startEngineIpc({ backendDir, env, onEvent }) {
   const entry = path.join(backendDir, "ipc-server.js");
   if (!fs.existsSync(entry)) {
     throw new Error(`Engine IPC entry not found: ${entry}`);
   }
 
-  const proc = fork(entry, [], {
+  const proc = spawnNodeWithElectron(entry, [], {
     cwd: backendDir,
     env,
-    detached: true,
-    silent: true,
     stdio: ["ignore", "pipe", "pipe", "ipc"],
   });
+  proc.unref();
   wireLogs("engine", proc);
 
   const pending = new Map();
@@ -377,6 +386,57 @@ function startEngineIpc({ backendDir, env, onEvent }) {
 function requireEngine() {
   if (!engine) throw new Error("Engine unavailable. Restart the IDE.");
   return engine;
+}
+
+async function pickAvailablePort(preferredPort) {
+  const tryListen = (port) =>
+    new Promise((resolve, reject) => {
+      const s = net.createServer();
+      s.unref();
+      s.on("error", reject);
+      s.listen({ port, host: "127.0.0.1" }, () => {
+        const addr = s.address();
+        const chosen = addr && typeof addr === "object" ? addr.port : port;
+        s.close(() => resolve(chosen));
+      });
+    });
+
+  try {
+    return await tryListen(preferredPort);
+  } catch {
+    return await tryListen(0);
+  }
+}
+
+function materializeJudgeBuildContext({ backendDir, userDataDir }) {
+  if (!app.isPackaged) return backendDir;
+
+  const outDir = path.join(userDataDir, "judge-context");
+  try {
+    fs.rmSync(outDir, { recursive: true, force: true });
+  } catch {
+    // ignore
+  }
+  fs.mkdirSync(outDir, { recursive: true });
+
+  const files = [
+    "Dockerfile.java-judge",
+    "Dockerfile.python-judge",
+    "Dockerfile.cpp-judge",
+    "Dockerfile.sql-judge",
+  ];
+
+  for (const f of files) {
+    fs.copyFileSync(path.join(backendDir, f), path.join(outDir, f));
+  }
+
+  // SQL judge Dockerfile copies this file from the build context.
+  const sqlRunnerSrc = path.join(backendDir, "src", "languages", "sql", "judgeRunner.py");
+  const sqlRunnerDest = path.join(outDir, "src", "languages", "sql", "judgeRunner.py");
+  fs.mkdirSync(path.dirname(sqlRunnerDest), { recursive: true });
+  fs.copyFileSync(sqlRunnerSrc, sqlRunnerDest);
+
+  return outDir;
 }
 
 async function ensureNodeModules({ dir, label, env }) {
@@ -669,8 +729,8 @@ async function createWindowAndBoot() {
     });
   }
 
-  const frontendUrl = `http://127.0.0.1:${DEFAULT_FRONTEND_PORT}`;
-  console.log(`[ide] frontendUrl=${frontendUrl}`);
+  const frontendUrlHint = `http://127.0.0.1:${DEFAULT_FRONTEND_PORT}`;
+  console.log(`[ide] frontendUrlHint=${frontendUrlHint}`);
 
   const win = new BrowserWindow({
     width: 1320,
@@ -748,7 +808,7 @@ async function createWindowAndBoot() {
             </div>
             <div class="row muted">
               <div class="dot"></div>
-              <div>Engine: <span class="mono">local IPC</span> · Frontend: <span class="mono">${frontendUrl}</span></div>
+              <div>Engine: <span class="mono">local IPC</span> · Frontend: <span class="mono">${frontendUrlHint}</span></div>
             </div>
             <div class="muted" style="margin-top: 14px;">
               If this hangs, check the terminal logs for missing deps.
@@ -786,21 +846,24 @@ async function createWindowAndBoot() {
 
   // Ensure monorepo dependencies exist (npm workspaces).
   {
-    const ok = await ensureNodeModules({ dir: repoRoot, label: "repo", env: baseEnv });
-    if (!ok) {
-      dialog.showErrorBox(
-        "Dependencies Failed",
-        `Failed to install npm dependencies in ${repoRoot}. Check terminal logs.`,
-      );
-      app.quit();
-      return;
+    if (!app.isPackaged) {
+      const ok = await ensureNodeModules({ dir: repoRoot, label: "repo", env: baseEnv });
+      if (!ok) {
+        dialog.showErrorBox(
+          "Dependencies Failed",
+          `Failed to install npm dependencies in ${repoRoot}. Check terminal logs.`,
+        );
+        app.quit();
+        return;
+      }
     }
   }
 
   // Ensure Docker judge images exist (Codemm compiles/runs in Docker).
   {
     console.log("[ide] Ensuring judge Docker images...");
-    const ok = await ensureJudgeImages({ dockerBin, backendDir, env: baseEnv });
+    const judgeContextDir = materializeJudgeBuildContext({ backendDir, userDataDir: storage.userDataDir });
+    const ok = await ensureJudgeImages({ dockerBin, backendDir: judgeContextDir, env: baseEnv });
     if (!ok) {
       dialog.showErrorBox(
         "Judge Images Failed",
@@ -864,18 +927,54 @@ async function createWindowAndBoot() {
     return;
   }
 
-  // Start frontend dev server (workspace).
-  console.log("[ide] Starting frontend (workspace codem-frontend)...");
-  frontendProc = spawn("npm", ["--workspace", "codem-frontend", "run", "dev"], {
-    cwd: repoRoot,
-    env: {
-      ...baseEnv,
-      PORT: String(DEFAULT_FRONTEND_PORT),
-      NEXT_TELEMETRY_DISABLED: "1",
-    },
-    detached: true,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  const frontendPort = app.isPackaged ? await pickAvailablePort(DEFAULT_FRONTEND_PORT) : DEFAULT_FRONTEND_PORT;
+  const frontendUrl = `http://127.0.0.1:${frontendPort}`;
+
+  // Start frontend.
+  const standaloneServer = path.join(frontendDir, ".next", "standalone", "server.js");
+  const useStandalone = app.isPackaged || process.env.CODEMM_FRONTEND_MODE === "standalone";
+  if (useStandalone) {
+    if (!fs.existsSync(standaloneServer)) {
+      dialog.showErrorBox(
+        "Frontend Build Missing",
+        [
+          "Could not find the built Next standalone server.",
+          "",
+          `Expected: ${standaloneServer}`,
+          "",
+          "In dev, run: npm run build:frontend",
+        ].join("\n"),
+      );
+      backendProc.shutdown();
+      app.quit();
+      return;
+    }
+    console.log(`[ide] Starting frontend (standalone) on ${frontendUrl}...`);
+    frontendProc = spawnNodeWithElectron(standaloneServer, [], {
+      cwd: path.dirname(standaloneServer),
+      env: {
+        ...baseEnv,
+        PORT: String(frontendPort),
+        HOSTNAME: "127.0.0.1",
+        NODE_ENV: "production",
+        NEXT_TELEMETRY_DISABLED: "1",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    frontendProc.unref();
+  } else {
+    console.log(`[ide] Starting frontend (dev) on ${frontendUrl}...`);
+    frontendProc = spawn("npm", ["--workspace", "codem-frontend", "run", "dev"], {
+      cwd: repoRoot,
+      env: {
+        ...baseEnv,
+        PORT: String(frontendPort),
+        NEXT_TELEMETRY_DISABLED: "1",
+      },
+      detached: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  }
   wireLogs("frontend", frontendProc);
   frontendProc.on("error", (err) => {
     dialog.showErrorBox("Frontend Failed To Start", String(err?.message || err));

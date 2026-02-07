@@ -8,12 +8,13 @@
     "dev": "npm --workspace codemm-ide run dev",
     "dev:backend": "npm --workspace codem-backend run dev",
     "dev:frontend": "npm --workspace codem-frontend run dev",
+    "build": "npm run build:backend && npm run build:frontend",
     "build:backend": "npm --workspace codem-backend run build",
     "build:frontend": "npm --workspace codem-frontend run build",
+    "dist:mac": "npm run build && npx electron-builder --mac --config electron-builder.yml",
     "lint": "npm --workspace codem-frontend run lint",
     "test": "npm --workspace codem-backend run test",
     "test:unit": "npm --workspace codem-backend run test:unit",
     "test:integration": "npm --workspace codem-backend run test:integration"
   }
 }
-

@@ -31,15 +31,19 @@ Status (as of 2026-02-07):
 - Engine boots via IPC (no backend port/health).
 - Express/SSE server code deleted from `apps/backend`.
 
-## Phase 3 (Next): Renderer Build Embedded in App
+## Phase 3 (In Progress): Renderer Build Embedded in App
 
 - Stop relying on `next dev` + `nodemon` child processes in dev-like mode.
 - Package production builds into the `.app` bundle.
+- Use Next standalone output (`apps/frontend/.next/standalone/server.js`) for packaged runs.
+
+Status (as of 2026-02-07):
+- Frontend builds produce a standalone bundle (`output: "standalone"` + `prepare-standalone`).
+- IDE can boot the standalone frontend server when packaged (or when `CODEMM_FRONTEND_MODE=standalone`).
 
 ## Transitional Compatibility Rules
 
 Allowed temporarily (must be removed):
 
-- HTTP endpoints on localhost.
-- `/sessions` route alias (use `/threads` everywhere).
-- “sessions” table name in SQLite (thread storage will be renamed once IPC replaces HTTP).
+- Next dev server on localhost (UI only).
+- “sessions” table name in SQLite (thread storage will be renamed to `threads`).
