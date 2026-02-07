@@ -876,7 +876,7 @@ async function createWindowAndBoot() {
 
   // Start engine (workspace).
   console.log("[ide] Starting engine (IPC)...");
-  const backendDbPath =
+  const engineDbPath =
     typeof baseEnv.CODEMM_DB_PATH === "string" && baseEnv.CODEMM_DB_PATH.trim()
       ? baseEnv.CODEMM_DB_PATH.trim()
       : currentWorkspace.backendDbPath;
@@ -885,7 +885,7 @@ async function createWindowAndBoot() {
     backendDir,
     env: {
       ...baseEnv,
-      CODEMM_DB_PATH: backendDbPath,
+      CODEMM_DB_PATH: engineDbPath,
       CODEMM_WORKSPACE_DIR: currentWorkspace.workspaceDir,
     },
     onEvent: (evt) => {
