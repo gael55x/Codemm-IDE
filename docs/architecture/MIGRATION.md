@@ -14,14 +14,17 @@ This repo (`Codemm-IDE/`) is the single source of truth.
   - UI uses `/threads`
   - engine keeps `/sessions` only as a **transitional alias**
 
-## Phase 2 (Next): Remove HTTP/Express/SSE Boundary
+## Phase 2 (In Progress): Remove HTTP/Express/SSE Boundary
 
 Transitional → final:
 
+- Introduce a local engine **IPC server** (child process) and migrate UI calls off HTTP.
 - Replace UI `fetch()` / `EventSource` calls to `127.0.0.1` with:
   - IPC calls (`ipcRenderer.invoke`) and event streams, or
   - in-process calls if the engine runs inside Electron main
-- Delete Express routes once all call sites use IPC.
+- Remove:
+  - backend ports/health checks/backend URLs
+  - Express routes and SSE adapters (delete once all call sites use IPC)
 
 ## Phase 3 (Next): Renderer Build Embedded in App
 
@@ -35,4 +38,3 @@ Allowed temporarily (must be removed):
 - HTTP endpoints on localhost.
 - `/sessions` route alias (use `/threads` everywhere).
 - “sessions” table name in SQLite (thread storage will be renamed once IPC replaces HTTP).
-
