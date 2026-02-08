@@ -15,6 +15,7 @@
 - Navigation control:
   - only load the local frontend URL
   - block unexpected navigations/new windows
+  - mitigate localhost port hijacking by verifying the frontend health token before loading
 - IPC:
   - use `preload` with minimal surface area
   - validate all inputs
@@ -30,3 +31,19 @@
 
 - All compilation/execution/judging remains in Docker.
 - The IDE should never run submitted code directly via `child_process` outside Docker.
+
+## Localhost Port Hijacking (Transitional)
+
+Codemm-IDE currently serves the renderer UI from a local Next.js server (127.0.0.1).
+
+Threat:
+
+- If the IDE loads an unexpected page (wrong port, hijacked port, unrelated local service), that page would still be running inside the Electron renderer and could call the preload bridge.
+
+Mitigation (current):
+
+- Electron main verifies it is talking to the frontend server it started by polling `GET /__codemm/health` and checking an ephemeral token set via `CODEMM_FRONTEND_TOKEN`.
+
+Target (final):
+
+- Remove localhost serving entirely (embed assets via custom protocol / file-based loading).

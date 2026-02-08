@@ -197,6 +197,55 @@ function waitForHttpOk(url, { timeoutMs = 120_000, intervalMs = 500 } = {}) {
   })();
 }
 
+function waitForFrontendReady(frontendUrl, { token, timeoutMs = 180_000, intervalMs = 500 } = {}) {
+  const healthUrl = `${frontendUrl}/__codemm/health`;
+  const deadline = Date.now() + timeoutMs;
+  let lastLogAt = 0;
+
+  async function once() {
+    return new Promise((resolve) => {
+      const req = http.get(healthUrl, (res) => {
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => {
+          const code = res.statusCode ?? 0;
+          if (code < 200 || code >= 300) return resolve(false);
+          try {
+            const raw = Buffer.concat(chunks).toString("utf8");
+            const parsed = JSON.parse(raw);
+            if (!parsed || typeof parsed !== "object") return resolve(false);
+            if (parsed.ok !== true) return resolve(false);
+            if (typeof token === "string" && token) {
+              return resolve(parsed.token === token);
+            }
+            return resolve(true);
+          } catch {
+            return resolve(false);
+          }
+        });
+        res.on("error", () => resolve(false));
+      });
+      req.on("error", () => resolve(false));
+      req.setTimeout(2_000, () => {
+        req.destroy();
+        resolve(false);
+      });
+    });
+  }
+
+  return (async () => {
+    while (Date.now() < deadline) {
+      if (await once()) return true;
+      if (Date.now() - lastLogAt > 5000) {
+        lastLogAt = Date.now();
+        console.log(`[ide] Waiting for frontend health: ${healthUrl}...`);
+      }
+      await sleep(intervalMs);
+    }
+    return false;
+  })();
+}
+
 function existsExecutable(p) {
   try {
     fs.accessSync(p, fs.constants.X_OK);
@@ -1054,6 +1103,7 @@ async function createWindowAndBoot() {
 
   const frontendPort = app.isPackaged ? await pickAvailablePort(DEFAULT_FRONTEND_PORT) : DEFAULT_FRONTEND_PORT;
   const frontendUrl = `http://127.0.0.1:${frontendPort}`;
+  const frontendToken = crypto.randomUUID();
 
   // Start frontend.
   const standaloneServer = path.join(frontendDir, ".next", "standalone", "server.js");
@@ -1087,6 +1137,7 @@ async function createWindowAndBoot() {
         HOSTNAME: "127.0.0.1",
         NODE_ENV: "production",
         NEXT_TELEMETRY_DISABLED: "1",
+        CODEMM_FRONTEND_TOKEN: frontendToken,
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -1099,6 +1150,7 @@ async function createWindowAndBoot() {
         ...baseEnv,
         PORT: String(frontendPort),
         NEXT_TELEMETRY_DISABLED: "1",
+        CODEMM_FRONTEND_TOKEN: frontendToken,
       },
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
@@ -1120,8 +1172,8 @@ async function createWindowAndBoot() {
     }
   });
 
-  console.log(`[ide] Waiting for frontend: ${frontendUrl}/`);
-  const frontendReady = await waitForHttpOk(`${frontendUrl}/`, { timeoutMs: 180_000 });
+  console.log(`[ide] Waiting for frontend health: ${frontendUrl}/__codemm/health`);
+  const frontendReady = await waitForFrontendReady(frontendUrl, { token: frontendToken, timeoutMs: 180_000 });
   if (!frontendReady) {
     dialog.showErrorBox(
       "Frontend Failed To Start",

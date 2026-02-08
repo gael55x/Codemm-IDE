@@ -34,6 +34,7 @@ Current:
 - **Renderer UI** (`apps/frontend`)
   - renders threads/activities
   - calls the local engine via `window.codemm.*` (preload IPC allowlist)
+  - is served from localhost (transitional), with a health-token check before Electron loads it
 
 Target (final):
 

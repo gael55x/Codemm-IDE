@@ -12,10 +12,24 @@ type ActivitySummary = {
   created_at: string;
 };
 
+type ActivitiesListResponse = { activities?: unknown };
+
+function isObject(x: unknown): x is Record<string, unknown> {
+  return Boolean(x) && typeof x === "object" && !Array.isArray(x);
+}
+
+function isActivitySummary(x: unknown): x is ActivitySummary {
+  if (!isObject(x)) return false;
+  return typeof x.id === "string" && typeof x.title === "string" && typeof x.created_at === "string";
+}
+
 function requireActivitiesApi() {
-  const api = (window as any)?.codemm?.activities;
-  if (!api) throw new Error("IDE bridge unavailable. Launch this UI inside Codemm-IDE.");
-  return api;
+  const w = window as unknown as { codemm?: unknown };
+  const codemm = isObject(w.codemm) ? w.codemm : null;
+  const activities = codemm && isObject(codemm.activities) ? codemm.activities : null;
+  const list = activities && "list" in activities ? (activities as Record<string, unknown>).list : null;
+  if (typeof list !== "function") throw new Error("IDE bridge unavailable. Launch this UI inside Codemm-IDE.");
+  return { list: list as (args: { limit?: number }) => Promise<ActivitiesListResponse> };
 }
 
 function formatTs(ts: string): string {
@@ -36,9 +50,12 @@ export default function ActivitiesPage() {
     setError(null);
     try {
       const data = await requireActivitiesApi().list({ limit });
-      setItems(Array.isArray(data?.activities) ? (data.activities as ActivitySummary[]) : []);
-    } catch (e: any) {
-      setError(e?.message ?? "Failed to load activities.");
+      const raw = data && Array.isArray(data.activities) ? data.activities : [];
+      const next = raw.filter(isActivitySummary);
+      setItems(next);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Failed to load activities.";
+      setError(msg);
     } finally {
       setLoading(false);
     }

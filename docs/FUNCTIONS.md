@@ -13,7 +13,7 @@ This document describes what the desktop wrapper does (and does not do).
 - Starts `apps/frontend` as a child process:
   - dev: `next dev` via npm workspaces
   - standalone: `apps/frontend/.next/standalone/server.js`
-- Waits for frontend readiness (default: `http://127.0.0.1:3000/`).
+- Waits for frontend readiness by polling a local health route (`/__codemm/health`) and verifying an ephemeral boot token.
 - Opens the frontend URL inside an Electron `BrowserWindow`.
 - On app quit, terminates both child processes.
 
@@ -30,6 +30,7 @@ This document describes what the desktop wrapper does (and does not do).
 - `CODEMM_BACKEND_DIR` default `apps/backend`
 - `CODEMM_FRONTEND_DIR` default `apps/frontend`
 - `CODEMM_FRONTEND_MODE=standalone` forces starting the built Next standalone server (instead of `next dev`) in dev.
+- `CODEMM_FRONTEND_TOKEN` internal: ephemeral boot token used only for readiness verification (Electron injects it; do not set manually).
 - `CODEMM_ENGINE_USE_DIST=1` forces the engine to load `apps/backend/dist/*` (instead of `ts-node` + `src/*`).
 - `DOCKER_PATH` optional path to the `docker` binary (helps for GUI-launched apps with a limited PATH)
 - `CODEMM_REBUILD_JUDGE=1` forces rebuilding judge Docker images on launch
