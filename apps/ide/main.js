@@ -725,7 +725,7 @@ async function createWindowAndBoot() {
       });
       dialog.showMessageBox({
         type: "info",
-        message: "API key saved",
+        message: "LLM settings saved",
         detail: "Restart Codemm-IDE to apply changes to the local engine.",
       }).catch(() => {});
       return { ok: true, updatedAt };
@@ -735,7 +735,7 @@ async function createWindowAndBoot() {
       clearSecrets({ userDataDir: storage.userDataDir });
       dialog.showMessageBox({
         type: "info",
-        message: "API key removed",
+        message: "LLM settings cleared",
         detail: "Restart Codemm-IDE to apply changes to the local engine.",
       }).catch(() => {});
       return { ok: true };

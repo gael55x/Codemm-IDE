@@ -105,7 +105,7 @@ export default function LlmSettingsPage() {
       <div className="mx-auto max-w-3xl px-6 py-10">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-semibold">LLM API Key</h1>
+            <h1 className="text-2xl font-semibold">LLM Settings</h1>
             <p className={`mt-2 text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
               Use your own API key (cloud providers) or run a local model via Ollama. Keys are stored locally and are never shown back in the UI.
             </p>
