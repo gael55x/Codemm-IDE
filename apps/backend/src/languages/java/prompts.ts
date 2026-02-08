@@ -177,31 +177,30 @@ Problem style: ${slot.problem_style}
 Constraints: ${slot.constraints}
 ${diversityHint}${topicReqBlock}${customBlock}
 
-Return a JSON object (not array) with these exact fields:
-{
-  "id": "unique-problem-id",
-  "title": "Problem Title",
-  "description": "Detailed problem description...",
-  "reasoning": "Plan: 1. Handle edge case X by returning Y. 2. Tests will expect Y...",
-  "starter_code": "public class ClassName { ... }",
-  "test_suite": "import org.junit.jupiter.api.Test; ...",
-  "reference_solution": "public class ClassName { /* complete implementation */ }",
-  "constraints": "${slot.constraints}",
-  "sample_inputs": ["input1", "input2"],
-  "sample_outputs": ["output1", "output2"],
-  "difficulty": "${slot.difficulty}",
-  "topic_tag": "${slot.topics[0] ?? "oop"}"
-}
+	Return a JSON object (not array) with these exact fields:
+	{
+	  "id": "unique-problem-id",
+	  "title": "Problem Title",
+	  "description": "Detailed problem description...",
+	  "starter_code": "public class ClassName { ... }",
+	  "test_suite": "import org.junit.jupiter.api.Test; ...",
+	  "reference_solution": "public class ClassName { /* complete implementation */ }",
+	  "constraints": "${slot.constraints}",
+	  "sample_inputs": ["input1", "input2"],
+	  "sample_outputs": ["output1", "output2"],
+	  "difficulty": "${slot.difficulty}",
+	  "topic_tag": "${slot.topics[0] ?? "oop"}"
+	}
 
 Critical rules:
 - test_suite must have exactly 8 @Test methods
 - reference_solution must be a complete, working solution that passes all tests
 - starter_code should be the same class with method signatures but TODOs instead of implementation
 - Avoid whitespace-padding edge cases unless you explicitly define normalization; do not assertEquals against string literals with leading/trailing spaces.
-- starter_code and reference_solution must declare at most ONE top-level public type.
-- All Java code must have NO package declarations
-- Test class must import org.junit.jupiter.api.Test and static org.junit.jupiter.api.Assertions.*
-- Use the "reasoning" field to explain your implementation plan and edge case strategy BEFORE writing code.
+	- starter_code and reference_solution must declare at most ONE top-level public type.
+	- All Java code must have NO package declarations
+	- Test class must import org.junit.jupiter.api.Test and static org.junit.jupiter.api.Assertions.*
+	- sample_inputs and sample_outputs MUST be non-empty and must have the same length (at least 1).
 
-Respond ONLY with JSON. NO markdown. NO code fences. NO extra text.`;
-}
+	Respond ONLY with JSON. NO markdown. NO code fences. NO extra text.`;
+	}

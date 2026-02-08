@@ -51,21 +51,20 @@ Problem style: ${slot.problem_style}
 Constraints: ${slot.constraints}
 ${customBlock}
 
-Return a JSON object (not array) with these exact fields:
-{
-  "id": "unique-problem-id",
-  "title": "Problem Title",
-  "description": "Detailed problem description...",
-  "reasoning": "Plan: 1. Handle edge case X... 2. Verify Y...",
-  "starter_code": "def solve(...):\\n    # TODO\\n    pass\\n",
-  "test_suite": "import pytest\\nfrom solution import solve\\n\\n...\\n",
-  "reference_solution": "def solve(...):\\n    ...\\n",
-  "constraints": "${slot.constraints}",
-  "sample_inputs": ["input1", "input2"],
-  "sample_outputs": ["output1", "output2"],
-  "difficulty": "${slot.difficulty}",
-  "topic_tag": "${slot.topics[0] ?? "oop"}"
-}
+	Return a JSON object (not array) with these exact fields:
+	{
+	  "id": "unique-problem-id",
+	  "title": "Problem Title",
+	  "description": "Detailed problem description...",
+	  "starter_code": "def solve(...):\\n    # TODO\\n    pass\\n",
+	  "test_suite": "import pytest\\nfrom solution import solve\\n\\n...\\n",
+	  "reference_solution": "def solve(...):\\n    ...\\n",
+	  "constraints": "${slot.constraints}",
+	  "sample_inputs": ["input1", "input2"],
+	  "sample_outputs": ["output1", "output2"],
+	  "difficulty": "${slot.difficulty}",
+	  "topic_tag": "${slot.topics[0] ?? "oop"}"
+	}
 
 Critical rules:
 - starter_code and reference_solution must define solve(...)
@@ -73,10 +72,11 @@ Critical rules:
 ${styleRules}
 - test_suite must import solve via: from solution import solve
 - test_suite must define exactly 8 tests named test_case_1..test_case_8
-- No print-based tests; use assertions only (stdout style captures via capsys)
-- No randomness, no pytest.approx, no flaky behavior
-- Keep test inputs small enough to run comfortably under strict time limits (avoid huge loops/recursion depth).
-- Ensure generated JSON strings are properly escaped (especially backslashes and quotes).
+	- No print-based tests; use assertions only (stdout style captures via capsys)
+	- No randomness, no pytest.approx, no flaky behavior
+	- Keep test inputs small enough to run comfortably under strict time limits (avoid huge loops/recursion depth).
+	- Ensure generated JSON strings are properly escaped (especially backslashes and quotes).
+	- sample_inputs and sample_outputs MUST be non-empty and must have the same length (at least 1).
 
-Respond ONLY with JSON. NO markdown. NO code fences. NO extra text.`;
-}
+	Respond ONLY with JSON. NO markdown. NO code fences. NO extra text.`;
+	}

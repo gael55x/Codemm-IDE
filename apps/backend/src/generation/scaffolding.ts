@@ -668,7 +668,9 @@ export function applyGuidedScaffolding(
     }
 
     const entryPaths = new Set(
-      draft.reference_workspace.files.filter((f) => f.role === "entry").map((f) => f.path)
+      draft.reference_workspace.files
+        .filter((f: { role: "entry" | "support" | "readonly"; path: string }) => f.role === "entry")
+        .map((f: { path: string }) => f.path)
     );
 
     const scaffolded_regions: Array<{
@@ -678,7 +680,7 @@ export function applyGuidedScaffolding(
       end_marker: string;
     }> = [];
 
-    const nextFiles = draft.reference_workspace.files.map((f) => {
+    const nextFiles = draft.reference_workspace.files.map((f: { role: "entry" | "support" | "readonly"; path: string; content: string }) => {
       if (entryPaths.has(f.path)) return f;
       const scaffolded = scaffoldJavaFromReference({
         reference: f.content,

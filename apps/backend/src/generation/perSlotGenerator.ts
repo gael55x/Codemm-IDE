@@ -338,7 +338,6 @@ ${previousJson || "(not provided)"}
 
 Goal:
 - Return corrected JSON with the exact same fields.
-- REQUIRED: Update the "reasoning" field to explain why the previous solution failed and how you are fixing it.
 - Prefer keeping id/title/description/starter_code stable.
 - Prefer fixing the reference solution artifact to satisfy the existing tests.
 - Only change test_suite if it is clearly inconsistent with the description or contains an obvious mistake; otherwise keep tests stable.
@@ -398,7 +397,6 @@ ${previousJson || "(not provided)"}
 
 Goal:
 - Return corrected JSON with the exact same fields.
-- REQUIRED: Update the "reasoning" field to explain why the previous solution failed and how you are fixing it.
 - Prefer keeping id/title/description/starter_code stable.
 - You MAY update test_suite and/or reference_solution, but the final pair MUST pass in Docker/pytest.
 
@@ -458,7 +456,6 @@ ${previousJson || "(not provided)"}
 
 Goal:
 - Return corrected JSON with the exact same fields.
-- REQUIRED: Update the "reasoning" field to explain why the previous solution failed and how you are fixing it.
 - Prefer keeping id/title/description/starter_code stable.
 - You MAY update test_suite and/or reference_solution, but the final pair MUST pass in Docker/g++.
 
@@ -512,7 +509,6 @@ ${previousJson || "(not provided)"}
 
 Goal:
 - Return corrected JSON with the exact same fields.
-- REQUIRED: Update the "reasoning" field to explain why the previous solution failed and how you are fixing it.
 - Prefer keeping id/title/description/starter_code stable.
 - You MAY update test_suite and/or reference_solution, but the final pair MUST pass in Docker/SQLite.
 

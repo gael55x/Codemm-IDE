@@ -49,7 +49,7 @@ const PedagogySchema = z
  * NOTE: reference_solution is required at generation time, validated in Docker,
  * then discarded and MUST NOT be persisted.
  */
-const CommonProblemFieldsSchema = z
+const CommonProblemFieldsSchemaBase = z
   .object({
     language: z.enum(["java", "python", "cpp", "sql"]),
     id: z.string().trim().min(1).max(80),
@@ -58,8 +58,10 @@ const CommonProblemFieldsSchema = z
 
     constraints: z.string().trim().min(1).max(2000),
 
-    sample_inputs: z.array(z.string()).max(20),
-    sample_outputs: z.array(z.string()).max(20),
+    // Examples are required: every problem must include at least 1 sample.
+    // Keep these small: they are for learner context, not for validation.
+    sample_inputs: z.array(z.string().trim().min(1).max(4000)).min(1).max(10),
+    sample_outputs: z.array(z.string().trim().min(1).max(4000)).min(1).max(10),
 
     // Planned metadata (derived from ProblemPlan, not user chat).
     difficulty: z.enum(["easy", "medium", "hard"]),
@@ -67,11 +69,21 @@ const CommonProblemFieldsSchema = z
 
     // Optional pedagogy metadata (no safety impact).
     pedagogy: PedagogySchema.optional(),
-
-    // Chain-of-Thought reasoning (optional, used to improve generation quality).
-    reasoning: z.string().optional(),
   })
   .strict();
+
+function refineSamplePairs(
+  draft: { sample_inputs: string[]; sample_outputs: string[] },
+  ctx: z.RefinementCtx,
+) {
+  if (draft.sample_inputs.length !== draft.sample_outputs.length) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "sample_inputs and sample_outputs must have the same length.",
+      path: ["sample_outputs"],
+    });
+  }
+}
 
 const JavaTestSuiteSchema = z
   .string()
@@ -232,7 +244,7 @@ export const WorkspaceSchema = z
     }
   });
 
-const LegacyDraftSchema = CommonProblemFieldsSchema.extend({
+const LegacyDraftSchemaBase = CommonProblemFieldsSchemaBase.extend({
   language: z.literal("java"),
   test_suite: JavaTestSuiteSchema,
   // Starter code the learner edits.
@@ -256,7 +268,7 @@ function refineWorkspaceProblem(
   }
 }
 
-const WorkspaceDraftSchemaBase = CommonProblemFieldsSchema.extend({
+const WorkspaceDraftSchemaBase = CommonProblemFieldsSchemaBase.extend({
   language: z.literal("java"),
   test_suite: JavaTestSuiteSchema,
   workspace: WorkspaceSchema,
@@ -264,28 +276,36 @@ const WorkspaceDraftSchemaBase = CommonProblemFieldsSchema.extend({
   reference_workspace: WorkspaceSchema,
 }).strict();
 
-const WorkspaceDraftSchema = WorkspaceDraftSchemaBase.superRefine(refineWorkspaceProblem);
+const LegacyDraftSchema = LegacyDraftSchemaBase.superRefine(refineSamplePairs);
 
-const PythonDraftSchema = CommonProblemFieldsSchema.extend({
+const WorkspaceDraftSchema = WorkspaceDraftSchemaBase.superRefine(refineSamplePairs).superRefine(refineWorkspaceProblem);
+
+const PythonDraftSchemaBase = CommonProblemFieldsSchemaBase.extend({
   language: z.literal("python"),
   test_suite: PythonTestSuiteSchema,
   starter_code: PythonSourceSchema,
   reference_solution: PythonSourceSchema,
 }).strict();
 
-const CppDraftSchema = CommonProblemFieldsSchema.extend({
+const PythonDraftSchema = PythonDraftSchemaBase.superRefine(refineSamplePairs);
+
+const CppDraftSchemaBase = CommonProblemFieldsSchemaBase.extend({
   language: z.literal("cpp"),
   test_suite: CppTestSuiteSchema,
   starter_code: CppSourceSchema,
   reference_solution: CppSourceSchema,
 }).strict();
 
-const SqlDraftSchema = CommonProblemFieldsSchema.extend({
+const CppDraftSchema = CppDraftSchemaBase.superRefine(refineSamplePairs);
+
+const SqlDraftSchemaBase = CommonProblemFieldsSchemaBase.extend({
   language: z.literal("sql"),
   test_suite: SqlTestSuiteSchema,
   starter_code: SqlQuerySchema,
   reference_solution: SqlQuerySchema,
 }).strict();
+
+const SqlDraftSchema = SqlDraftSchemaBase.superRefine(refineSamplePairs);
 
 export const GeneratedProblemDraftSchema = z.union([
   LegacyDraftSchema,
@@ -301,11 +321,14 @@ export type GeneratedProblemDraft = z.infer<typeof GeneratedProblemDraftSchema>;
  * Persisted problem shape (reference_solution intentionally omitted).
  */
 export const GeneratedProblemSchema = z.union([
-  LegacyDraftSchema.omit({ reference_solution: true }),
-  WorkspaceDraftSchemaBase.omit({ reference_workspace: true }).superRefine(refineWorkspaceProblem),
-  PythonDraftSchema.omit({ reference_solution: true }),
-  CppDraftSchema.omit({ reference_solution: true }),
-  SqlDraftSchema.omit({ reference_solution: true }),
+  LegacyDraftSchemaBase.omit({ reference_solution: true }).superRefine(refineSamplePairs),
+  WorkspaceDraftSchemaBase
+    .omit({ reference_workspace: true })
+    .superRefine(refineSamplePairs)
+    .superRefine(refineWorkspaceProblem),
+  PythonDraftSchemaBase.omit({ reference_solution: true }).superRefine(refineSamplePairs),
+  CppDraftSchemaBase.omit({ reference_solution: true }).superRefine(refineSamplePairs),
+  SqlDraftSchemaBase.omit({ reference_solution: true }).superRefine(refineSamplePairs),
 ]);
 
 export type GeneratedProblem = z.infer<typeof GeneratedProblemSchema>;

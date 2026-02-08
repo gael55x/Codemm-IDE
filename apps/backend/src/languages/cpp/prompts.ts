@@ -88,21 +88,20 @@ Problem style: ${slot.problem_style}
 Constraints: ${slot.constraints}
 ${customBlock}
 
-Return a JSON object (not array) with these exact fields:
-{
-  "id": "unique-problem-id",
-  "title": "Problem Title",
-  "description": "Detailed problem description...",
-  "reasoning": "Plan: I will handle integer overflow by... I will include <functional>...",
-  "starter_code": "#include <bits/stdc++.h>\\n\\n// Implement solve(...) below.\\n",
-  "test_suite": "#include <bits/stdc++.h>\\n#include \\\"solution.cpp\\\"\\n\\n...\\n",
-  "reference_solution": "#include <bits/stdc++.h>\\n\\n// solve(...)\\n",
-  "constraints": "${slot.constraints}",
-  "sample_inputs": ["input1", "input2"],
-  "sample_outputs": ["output1", "output2"],
-  "difficulty": "${slot.difficulty}",
-  "topic_tag": "${slot.topics[0] ?? "oop"}"
-}
+	Return a JSON object (not array) with these exact fields:
+	{
+	  "id": "unique-problem-id",
+	  "title": "Problem Title",
+	  "description": "Detailed problem description...",
+	  "starter_code": "#include <bits/stdc++.h>\\n\\n// Implement solve(...) below.\\n",
+	  "test_suite": "#include <bits/stdc++.h>\\n#include \\\"solution.cpp\\\"\\n\\n...\\n",
+	  "reference_solution": "#include <bits/stdc++.h>\\n\\n// solve(...)\\n",
+	  "constraints": "${slot.constraints}",
+	  "sample_inputs": ["input1", "input2"],
+	  "sample_outputs": ["output1", "output2"],
+	  "difficulty": "${slot.difficulty}",
+	  "topic_tag": "${slot.topics[0] ?? "oop"}"
+	}
 
 Critical rules:
 - starter_code and reference_solution must define solve(...) (no main())
@@ -117,10 +116,11 @@ Critical rules:
   int main(){ ... return __codem_failures ? 1 : 0; }
 - test_suite must call RUN_TEST exactly 8 times: test_case_1..test_case_8
 - solve(...) must NOT read from stdin (no cin/scanf/getline/etc)
-${styleRules}
-- Tests must print exactly one status line per test: [PASS] test_case_N or [FAIL] test_case_N
-- No randomness, no flaky behavior
-- Keep test inputs small enough to run comfortably under strict time limits (avoid massive graphs/arrays).
+	${styleRules}
+	- Tests must print exactly one status line per test: [PASS] test_case_N or [FAIL] test_case_N
+	- No randomness, no flaky behavior
+	- Keep test inputs small enough to run comfortably under strict time limits (avoid massive graphs/arrays).
+	- sample_inputs and sample_outputs MUST be non-empty and must have the same length (at least 1).
 
-Respond ONLY with JSON. NO markdown. NO code fences. NO extra text.`;
-}
+	Respond ONLY with JSON. NO markdown. NO code fences. NO extra text.`;
+	}

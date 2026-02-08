@@ -45,7 +45,9 @@ export async function validateReferenceSolution(draft: GeneratedProblemDraft): P
       ? await profile.judgeAdapter.judge({ kind: "code", code: draft.reference_solution, testSuite: draft.test_suite })
       : await profile.judgeAdapter.judge({
           kind: "files",
-          files: Object.fromEntries(draft.reference_workspace.files.map((f) => [f.path, f.content])),
+          files: Object.fromEntries(
+            draft.reference_workspace.files.map((f: { path: string; content: string }) => [f.path, f.content])
+          ),
           testSuite: draft.test_suite,
         });
   traceText("generation.judge.stdout", result.stdout ?? "", { extra: { title: draft.title } });

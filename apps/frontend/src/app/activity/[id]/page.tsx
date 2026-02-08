@@ -1316,7 +1316,7 @@ export default function ActivityPage() {
                 </>
               ) : null}
 
-              {/* Examples are always shown (even if empty). */}
+              {/* Examples are always shown. Problems are expected to include at least 1 sample. */}
               {(() => {
                 const sampleIns = selectedProblem?.sample_inputs || selectedProblem?.sampleInputs || [];
                 const sampleOuts = selectedProblem?.sample_outputs || selectedProblem?.sampleOutputs || [];
@@ -1329,18 +1329,26 @@ export default function ActivityPage() {
                         const input = typeof sampleIns[i] === "string" ? sampleIns[i]! : "";
                         const output = typeof sampleOuts[i] === "string" ? sampleOuts[i]! : "";
                         return (
-                          <div key={i} className="grid gap-2 text-xs sm:grid-cols-2">
-                            <div>
-                              <div className="mb-1 text-[11px] font-semibold text-slate-700">Example {i + 1} input</div>
-                              <pre className="max-h-40 overflow-auto rounded border border-slate-200 bg-white p-2 font-mono text-[11px] text-slate-800">
-                                {input.trim() ? input : "(no example input provided)"}
-                              </pre>
+                          <div key={i} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                                Sample {i + 1}
+                              </div>
                             </div>
-                            <div>
-                              <div className="mb-1 text-[11px] font-semibold text-slate-700">Example {i + 1} output</div>
-                              <pre className="max-h-40 overflow-auto rounded border border-slate-200 bg-white p-2 font-mono text-[11px] text-slate-800">
-                                {output.trim() ? output : "(no example output provided)"}
-                              </pre>
+
+                            <div className="mt-3 space-y-3">
+                              <div>
+                                <div className="mb-1 text-[11px] font-semibold text-slate-700">Sample input {i + 1}</div>
+                                <pre className="max-h-48 overflow-auto rounded-lg border border-slate-200 bg-white p-2 font-mono text-[11px] text-slate-800">
+                                  {input.trim() ? input : "—"}
+                                </pre>
+                              </div>
+                              <div>
+                                <div className="mb-1 text-[11px] font-semibold text-slate-700">Sample output {i + 1}</div>
+                                <pre className="max-h-48 overflow-auto rounded-lg border border-slate-200 bg-white p-2 font-mono text-[11px] text-slate-800">
+                                  {output.trim() ? output : "—"}
+                                </pre>
+                              </div>
                             </div>
                           </div>
                         );
@@ -1348,7 +1356,7 @@ export default function ActivityPage() {
                     </div>
                   </>
                 );
-	              })()}
+              })()}
 	            </div>
 	          </section>
 

@@ -43,13 +43,12 @@ Return a JSON object (not array) with these exact fields:
   "id": "unique-problem-id",
   "title": "Problem Title",
   "description": "Detailed problem description (include table schema description in prose)...",
-  "reasoning": "Plan: The query requires a self-join... I will order results by ID...",
   "starter_code": "SELECT ...",
   "test_suite": "{\\n  \\\"schema_sql\\\": \\\"...\\\",\\n  \\\"cases\\\": [ ... ]\\n}",
   "reference_solution": "SELECT ...",
   "constraints": "${slot.constraints}",
-  "sample_inputs": [],
-  "sample_outputs": [],
+  "sample_inputs": ["Example 1 input (describe relevant table rows for the sample case)", "Example 2 input (...)"],
+  "sample_outputs": ["Example 1 output (show expected query result table)", "Example 2 output (...)"],
   "difficulty": "${slot.difficulty}",
   "topic_tag": "${slot.topics[0] ?? "oop"}"
 }
@@ -61,6 +60,7 @@ Critical rules:
 - Ensure "cases" is an array of 8 objects.
 - Ensure "expected" matches the query columns/rows exactly.
 - If order matters, set order_matters=true and include ORDER BY in the solution query.
+- sample_inputs and sample_outputs MUST be non-empty and must have the same length (at least 1).
 
 Respond ONLY with JSON. NO markdown. NO code fences. NO extra text.`;
 
