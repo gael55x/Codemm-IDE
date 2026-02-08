@@ -1,86 +1,92 @@
-# Codemm-IDE
+<div align="center">
+  <h1>Codemm</h1>
+  <p>Codemm is a local-only Electron IDE that turns a short chat into verified programming activities (problems + tests) and grades solutions in Docker sandboxes.</p>
+  <img src="./apps/frontend/images/Codemm-home.png" alt="Codemm home" width="900" />
+</div>
 
-Desktop wrapper for Codemm that starts (locally):
+## What Codemm Is (IDE-First)
 
-- `apps/backend` local engine (agent loop + Docker judge + SQLite) via **IPC** (no HTTP port)
-- `apps/frontend` (Next.js UI) on `http://127.0.0.1:3000` (dev)
+Codemm runs entirely on your machine:
 
-Then it opens the frontend in an Electron window so you don't have to run backend + frontend manually.
+- No authentication, accounts, profiles, or community features.
+- A **workspace** (folder on disk) owns all durable state.
+- A **thread** is a local conversation that produces an `ActivitySpec`.
+- A **run** is an append-only execution log (generation / judge), used for replay + debugging.
+- An **activity** is the output you practice: learner-facing problems + tests, verified in Docker.
 
-Codemm-IDE is local-only: there are no accounts, no login, and no community features.
+Design goals:
 
-## Requirements
+- Determinism at boundaries (LLM proposes; deterministic code validates/gates/persists).
+- Debuggability (durable run logs and reproducible state).
+- Safety (untrusted code runs in Docker only).
+
+## High-Level Architecture
+
+Processes (today):
+
+- **Electron main** (`apps/ide/main.js`): boot orchestration, workspace selection, secrets handling, IPC bridge.
+- **Local engine** (`apps/backend`): agent loop + SQLite persistence + Docker judge. Exposes RPC via Node IPC (`process.send`).
+- **Renderer UI** (`apps/frontend`): Next.js UI loaded inside Electron; uses `window.codemm.*` via a preload allowlist (`apps/ide/preload.js`).
+
+There is no internal HTTP API for engine calls. UI → engine is IPC only.
+
+## Local State & Persistence
+
+- Per-workspace DB: `<workspaceDataDir>/codemm.db` (preferred: `<workspace>/.codemm/codemm.db`)
+- Key tables (IDE-first): `threads`, `thread_messages`, `activities`, `runs`, `run_events`
+
+## Security Model (Practical)
+
+- **Docker is the sandbox boundary** for untrusted code execution/judging.
+- Electron hardening:
+  - `nodeIntegration: false`, `contextIsolation: true`
+  - strict preload allowlist (`window.codemm.*`) with payload validation
+- Secrets:
+  - stored locally via Electron `safeStorage` (encrypted at rest)
+  - never returned to renderer JS
+- Renderer loading:
+  - UI is served from localhost (transitional) and verified via `GET /__codemm/health` + an ephemeral boot token before the Electron window loads it (mitigates localhost port hijacking).
+
+## Development
+
+Requirements:
 
 - macOS
 - Node.js + npm
 - Docker Desktop (running)
 
-## Run (Single Command)
-
-From `Codemm-IDE/`:
+Run:
 
 ```bash
 npm install
 npm run dev
 ```
 
-On first launch, the app prompts you to select a workspace folder. Configure your LLM API key via the **API Key** screen in the UI.
+On first launch, pick a workspace folder. Configure your LLM API key via the **API Key** screen in the UI.
 
-## Monorepo Layout
-
-- `apps/ide` Electron wrapper
-- `apps/backend` local engine (IPC)
-- `apps/frontend` Next.js UI
-
-## Contribute
-
-See `CONTRIBUTING.md`.
-
-## Troubleshoot
-
-See `docs/TROUBLESHOOTING.md`.
-
-## What This App Does
-
-See `docs/FUNCTIONS.md`.
-
-## Environment Overrides
-
-- `CODEMM_FRONTEND_PORT` (default: `3000`)
-- `CODEMM_BACKEND_DIR` (default: `apps/backend`)
-- `CODEMM_FRONTEND_DIR` (default: `apps/frontend`)
-- `DOCKER_PATH` to point at the `docker` binary if it isn't on PATH
-- `CODEMM_WORKSPACE_DIR` optional workspace folder override (skips folder picker)
-- `CODEMM_DB_PATH` optional absolute path to the workspace SQLite DB file
-
-## Notes
-
-- Dev uses `next dev` for the UI by default.
-- Phase 3 packaging is in progress; the repo now includes an `electron-builder` config, but native module + bundling hardening may still need iteration (notably `better-sqlite3`).
-
-## Package (macOS)
-
-From `Codemm-IDE/`:
+## Packaging (macOS)
 
 ```bash
 npm install
-npm run rebuild:electron
 npm run dist:mac
 ```
 
-## Packaging Path (What We'd Implement Next)
+`dist:mac` rebuilds native deps for Electron automatically (notably `better-sqlite3`).
 
-To turn this into a true “double-click” macOS app (no terminals, no `npm` required), the next steps are:
+## Docs Index
 
-1. Build artifacts during packaging:
-   - Backend: `apps/backend` → `npm run build` → `dist/`
-   - Frontend: `apps/frontend` → `next build`
-     - Recommended: set `output: "standalone"` in `apps/frontend/next.config.ts` so Next produces a minimal server bundle.
-2. Run backend + frontend from inside Electron:
-   - Use Electron’s embedded Node (`ELECTRON_RUN_AS_NODE=1`) or in-process servers (preferred) so the app doesn’t depend on a system `node`.
-3. Handle native modules:
-   - `apps/backend` uses `better-sqlite3` (native). Packaged Electron apps must rebuild it against Electron’s ABI (typically via `electron-rebuild` or `electron-builder install-app-deps`).
-4. Keep Docker dependency external:
-   - The app should detect Docker Desktop, validate `docker info`, and show a clear “start Docker” UI when needed (we already do the detection in dev mode).
+- IDE-first mental model + topology: `docs/architecture/IDE_FIRST.md`
+- Migration phases: `docs/architecture/MIGRATION.md`
+- Wrapper behavior: `docs/FUNCTIONS.md`
+- Security notes: `docs/SECURITY.md`
+- Troubleshooting: `docs/TROUBLESHOOTING.md`
+- Contributing: `CONTRIBUTING.md`
 
-If you want, I can implement the packaging pipeline next (Electron Builder + rebuild steps + “standalone” Next output).
+## Environment Overrides (Dev)
+
+- `CODEMM_FRONTEND_PORT` (default `3000`)
+- `CODEMM_FRONTEND_MODE=standalone` (use built Next standalone server in dev)
+- `CODEMM_ENGINE_USE_DIST=1` (force engine `dist/*` instead of `ts-node`)
+- `DOCKER_PATH` (explicit docker binary path)
+- `CODEMM_WORKSPACE_DIR` (skip workspace picker)
+- `CODEMM_DB_PATH` (override DB file path)
