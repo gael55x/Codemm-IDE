@@ -697,23 +697,48 @@ function requireEngine() {
 }
 
 async function pickAvailablePort(preferredPort) {
-  const tryListen = (port) =>
+  const shouldSkipHost = (err) => {
+    const code = err && typeof err === "object" ? err.code : null;
+    // Some environments may not have IPv6 loopback enabled; don't block dev boot on that.
+    return code === "EAFNOSUPPORT" || code === "EADDRNOTAVAIL";
+  };
+
+  const tryListen = (port, host) =>
     new Promise((resolve, reject) => {
       const s = net.createServer();
       s.unref();
       s.on("error", reject);
-      s.listen({ port, host: "127.0.0.1" }, () => {
+      s.listen({ port, host }, () => {
         const addr = s.address();
         const chosen = addr && typeof addr === "object" ? addr.port : port;
         s.close(() => resolve(chosen));
       });
     });
 
-  try {
-    return await tryListen(preferredPort);
-  } catch {
-    return await tryListen(0);
+  const isPortFree = async (port) => {
+    // Next may bind on IPv6 (::) depending on flags/env, so we probe both loopbacks.
+    const hosts = ["127.0.0.1", "::1"];
+    for (const host of hosts) {
+      try {
+        await tryListen(port, host);
+      } catch (err) {
+        if (host === "::1" && shouldSkipHost(err)) continue;
+        return false;
+      }
+    }
+    return true;
+  };
+
+  if (await isPortFree(preferredPort)) return preferredPort;
+
+  // Pick an ephemeral port and confirm it's usable on the loopback(s) we care about.
+  for (let i = 0; i < 10; i += 1) {
+    const candidate = await tryListen(0, "127.0.0.1");
+    if (await isPortFree(candidate)) return candidate;
   }
+
+  // Fall back to "any ephemeral port" even if IPv6 probing is inconclusive.
+  return await tryListen(0, "127.0.0.1");
 }
 
 function materializeJudgeBuildContext({ backendDir, userDataDir }) {
@@ -1570,16 +1595,38 @@ async function createWindowAndBoot() {
     frontendProc.unref();
   } else {
     console.log(`[ide] Starting frontend (dev) on ${frontendUrl}...`);
-    frontendProc = spawn(getNpmBin(), ["--workspace", "codem-frontend", "run", "dev", "--", "-p", String(frontendPort), "-H", "127.0.0.1"], {
-      cwd: repoRoot,
-      env: {
-        ...baseEnv,
-        NEXT_TELEMETRY_DISABLED: "1",
-        CODEMM_FRONTEND_TOKEN: frontendToken,
+    const nextBin = path.join(repoRoot, "node_modules", "next", "dist", "bin", "next");
+    if (!fs.existsSync(nextBin)) {
+      dialog.showErrorBox(
+        "Frontend Dependencies Missing",
+        [
+          "Could not find the Next.js CLI in node_modules.",
+          "",
+          `Expected: ${nextBin}`,
+          "",
+          "Run: npm install",
+        ].join("\n"),
+      );
+      backendProc.shutdown();
+      app.quit();
+      return;
+    }
+    frontendProc = spawnSystemNode(
+      nextBin,
+      ["dev", "-p", String(frontendPort), "-H", "127.0.0.1"],
+      {
+        cwd: frontendDir,
+        env: {
+          ...baseEnv,
+          PORT: String(frontendPort),
+          HOSTNAME: "127.0.0.1",
+          NEXT_TELEMETRY_DISABLED: "1",
+          CODEMM_FRONTEND_TOKEN: frontendToken,
+        },
+        stdio: ["ignore", "pipe", "pipe"],
       },
-      detached: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    );
+    frontendProc.unref();
   }
   wireLogs("frontend", frontendProc);
   frontendProc.on("error", (err) => {

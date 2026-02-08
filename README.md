@@ -75,6 +75,8 @@ npm run dev
 
 On first launch, pick a workspace folder. Configure your provider via **LLM Settings** in the UI.
 
+Dev default: when running from the repo, if `CODEMM_WORKSPACE_DIR` is not set, Codemm defaults the workspace to the repo root so the local `.codemm/` folder is created inside the repo (and is gitignored).
+
 ## Packaging
 
 ```bash
@@ -102,4 +104,5 @@ Builds are typically produced on the target OS (mac builds on macOS, win builds 
 - `CODEMM_ENGINE_USE_DIST=1` (force engine `dist/*` instead of `ts-node`)
 - `DOCKER_PATH` (explicit docker binary path)
 - `CODEMM_WORKSPACE_DIR` (skip workspace picker)
+- `CODEMM_WORKSPACE_DATA_DIR` (override workspace data dir; relative paths resolve from `CODEMM_WORKSPACE_DIR`)
 - `CODEMM_DB_PATH` (override DB file path)

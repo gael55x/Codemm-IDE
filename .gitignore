@@ -12,6 +12,9 @@
 !.env.example
 !**/.env.example
 
+# Codemm local workspace data (never commit)
+**/.codemm/
+
 # Logs
 *.log
 
