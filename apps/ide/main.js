@@ -1490,10 +1490,14 @@ async function createWindowAndBoot() {
     // ignore; engine will error later if generation is attempted without configuration
   }
 
-  const frontendPort = app.isPackaged ? await pickAvailablePort(DEFAULT_FRONTEND_PORT) : DEFAULT_FRONTEND_PORT;
+  const preferredFrontendPort = DEFAULT_FRONTEND_PORT;
+  const frontendPort = await pickAvailablePort(preferredFrontendPort);
   const frontendUrl = `http://127.0.0.1:${frontendPort}`;
   const frontendToken = crypto.randomUUID();
   allowedFrontendOrigin = new URL(frontendUrl).origin;
+  if (frontendPort !== preferredFrontendPort) {
+    console.warn(`[ide] Frontend port ${preferredFrontendPort} is in use; using ${frontendPort} instead.`);
+  }
 
   // Start frontend.
   const standaloneServer = path.join(frontendDir, ".next", "standalone", "server.js");
@@ -1534,12 +1538,10 @@ async function createWindowAndBoot() {
     frontendProc.unref();
   } else {
     console.log(`[ide] Starting frontend (dev) on ${frontendUrl}...`);
-    frontendProc = spawn("npm", ["--workspace", "codem-frontend", "run", "dev"], {
+    frontendProc = spawn("npm", ["--workspace", "codem-frontend", "run", "dev", "--", "-p", String(frontendPort), "-H", "127.0.0.1"], {
       cwd: repoRoot,
       env: {
         ...baseEnv,
-        PORT: String(frontendPort),
-        HOSTNAME: "127.0.0.1",
         NEXT_TELEMETRY_DISABLED: "1",
         CODEMM_FRONTEND_TOKEN: frontendToken,
       },
