@@ -19,6 +19,22 @@ let ipcWired = false;
 let currentWorkspace = null; // { workspaceDir, workspaceDataDir, backendDbPath, userDataDir }
 let engine = null; // { proc, call, onEvent, shutdown }
 
+function tryRegisterIpcHandler(channel, handler) {
+  try {
+    ipcMain.handle(channel, handler);
+  } catch (e) {
+    // If the handler is already registered (dev reloads, multi-window), ignore.
+    // eslint-disable-next-line no-console
+    console.warn(`[ide] IPC handler already registered: ${channel}`);
+  }
+}
+
+// Register a small set of handlers early so UI actions don't depend on the workspace boot path.
+tryRegisterIpcHandler("codemm:ollama:openInstall", async () => {
+  await shell.openExternal("https://ollama.com/download");
+  return { ok: true };
+});
+
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -1000,11 +1016,6 @@ async function createWindowAndBoot() {
         models: st.models,
         error: st.error,
       };
-    });
-
-    ipcMain.handle("codemm:ollama:openInstall", async () => {
-      await shell.openExternal("https://ollama.com/download");
-      return { ok: true };
     });
 
     ipcMain.handle("codemm:ollama:ensure", async (_evt, args) => {

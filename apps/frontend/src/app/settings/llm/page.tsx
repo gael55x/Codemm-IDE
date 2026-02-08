@@ -272,8 +272,25 @@ export default function LlmSettingsPage() {
                             darkMode ? "bg-slate-800 hover:bg-slate-700" : "bg-slate-100 hover:bg-slate-200"
                           }`}
                           onClick={async () => {
-                            const ollama = (window as any)?.codemm?.ollama;
-                            if (ollama?.openInstall) await ollama.openInstall();
+                            setError(null);
+                            try {
+                              const ollama = (window as any)?.codemm?.ollama;
+                              if (ollama?.openInstall) {
+                                const res = await ollama.openInstall();
+                                if (res && typeof res === "object" && (res as any).ok === false) {
+                                  throw new Error(String((res as any).error || "Failed to open install link."));
+                                }
+                                return;
+                              }
+                            } catch {
+                              // Fallback: open from the renderer (Electron will route to the OS browser).
+                              try {
+                                window.open("https://ollama.com/download", "_blank", "noopener,noreferrer");
+                                return;
+                              } catch (e: any) {
+                                setError(e?.message || "Failed to open install link.");
+                              }
+                            }
                           }}
                           disabled={saving}
                         >

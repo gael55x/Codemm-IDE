@@ -87,7 +87,13 @@ contextBridge.exposeInMainWorld("codemm", {
   },
   ollama: {
     getStatus: (args) => ipcRenderer.invoke("codemm:ollama:getStatus", args),
-    openInstall: () => ipcRenderer.invoke("codemm:ollama:openInstall"),
+    openInstall: async () => {
+      try {
+        return await ipcRenderer.invoke("codemm:ollama:openInstall");
+      } catch (e) {
+        return { ok: false, error: e?.message ? String(e.message) : "Failed to open install link." };
+      }
+    },
     ensure: async ({ model, baseURL, onEvent }) => {
       if (typeof model !== "string" || !model.trim()) throw new Error("model is required.");
       const res = await ipcRenderer.invoke("codemm:ollama:ensure", { model, ...(typeof baseURL === "string" && baseURL.trim() ? { baseURL } : {}) });
