@@ -1,10 +1,5 @@
 import type { CompletionOpts, CompletionResult } from "../types";
 
-function getOllamaBaseUrl(): string {
-  const raw = process.env.CODEMM_OLLAMA_URL ?? process.env.OLLAMA_HOST ?? "http://127.0.0.1:11434";
-  return raw.replace(/\/+$/, "");
-}
-
 export function hasOllamaModelConfigured(): boolean {
   const m = process.env.CODEMM_OLLAMA_MODEL ?? process.env.OLLAMA_MODEL;
   return typeof m === "string" && Boolean(m.trim());
@@ -19,6 +14,11 @@ function getOllamaModelOrThrow(explicit?: string): string {
     );
   }
   return model;
+}
+
+function getOllamaBaseUrl(explicit?: string): string {
+  const raw = explicit ?? process.env.CODEMM_OLLAMA_URL ?? process.env.OLLAMA_HOST ?? "http://127.0.0.1:11434";
+  return raw.replace(/\/+$/, "");
 }
 
 async function fetchJson(url: string, opts: { method: string; body: unknown; timeoutMs: number }) {
@@ -45,9 +45,12 @@ async function fetchJson(url: string, opts: { method: string; body: unknown; tim
   }
 }
 
-export async function createOllamaCompletion(opts: CompletionOpts): Promise<CompletionResult> {
-  const baseUrl = getOllamaBaseUrl();
-  const model = getOllamaModelOrThrow(opts.model);
+export async function createOllamaCompletion(
+  opts: CompletionOpts,
+  auth?: { baseURL?: string; model?: string }
+): Promise<CompletionResult> {
+  const baseUrl = getOllamaBaseUrl(auth?.baseURL);
+  const model = getOllamaModelOrThrow(opts.model ?? auth?.model);
 
   const temperature = typeof opts.temperature === "number" && Number.isFinite(opts.temperature) ? opts.temperature : undefined;
   const maxTokens = typeof opts.maxTokens === "number" && Number.isFinite(opts.maxTokens) ? Math.max(64, Math.floor(opts.maxTokens)) : undefined;
@@ -74,4 +77,3 @@ export async function createOllamaCompletion(opts: CompletionOpts): Promise<Comp
 
   return { content: [{ type: "text", text }] };
 }
-

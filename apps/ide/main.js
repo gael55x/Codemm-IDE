@@ -1049,23 +1049,6 @@ async function createWindowAndBoot() {
 
   // Load locally stored LLM key (if configured) and inject it into the local engine process.
   const secrets = loadSecrets({ userDataDir: storage.userDataDir }).llm;
-  if (secrets && secrets.provider) {
-    if (secrets.provider === "ollama") {
-      baseEnv.CODEX_PROVIDER = "ollama";
-      if (typeof secrets.model === "string" && secrets.model.trim()) {
-        baseEnv.CODEMM_OLLAMA_MODEL = secrets.model.trim();
-      }
-    } else if (secrets.apiKey && secrets.provider === "openai") {
-      baseEnv.CODEX_PROVIDER = "openai";
-      baseEnv.CODEX_API_KEY = secrets.apiKey;
-    } else if (secrets.apiKey && secrets.provider === "anthropic") {
-      baseEnv.CODEX_PROVIDER = "anthropic";
-      baseEnv.ANTHROPIC_API_KEY = secrets.apiKey;
-    } else if (secrets.apiKey && secrets.provider === "gemini") {
-      baseEnv.CODEX_PROVIDER = "gemini";
-      baseEnv.GEMINI_API_KEY = secrets.apiKey;
-    }
-  }
 
   // Ensure monorepo dependencies exist (npm workspaces).
   {
@@ -1152,6 +1135,16 @@ async function createWindowAndBoot() {
     backendProc.shutdown();
     app.quit();
     return;
+  }
+
+  // Configure LLM provider in-memory in the engine (avoid passing API keys via env).
+  try {
+    const provider = secrets && typeof secrets.provider === "string" ? secrets.provider.trim().toLowerCase() : null;
+    const apiKey = secrets && typeof secrets.apiKey === "string" ? secrets.apiKey : null;
+    const model = secrets && typeof secrets.model === "string" ? secrets.model : null;
+    await backendProc.call("engine.configureLlm", { provider, apiKey, model, baseURL: null });
+  } catch {
+    // ignore; engine will error later if generation is attempted without configuration
   }
 
   const frontendPort = app.isPackaged ? await pickAvailablePort(DEFAULT_FRONTEND_PORT) : DEFAULT_FRONTEND_PORT;

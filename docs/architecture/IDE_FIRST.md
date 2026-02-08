@@ -67,6 +67,7 @@ Target (final):
   - `window.codemm.secrets.setLlmSettings({ provider, apiKey })`
   - `window.codemm.secrets.clearLlmSettings()`
 - Engine receives the key via environment variables on launch (transitional).
+  - Electron configures the engine in-memory on boot (no secrets in renderer JS).
   - Changing the key currently requires restarting the IDE (transitional).
 
 ### Local-Only LLM Option (No API Key): Ollama

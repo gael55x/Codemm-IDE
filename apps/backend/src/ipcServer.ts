@@ -95,6 +95,29 @@ async function handle(method: string, paramsRaw: unknown): Promise<unknown> {
     return { ok: true };
   }
 
+  if (method === "engine.configureLlm") {
+    const params = requireParams(paramsRaw);
+    const provider = getString(params.provider);
+    const apiKey = getString(params.apiKey);
+    const model = getString(params.model);
+    const baseURL = getString(params.baseURL);
+
+    // Store in-memory only (do not persist).
+    const { setRuntimeLlmConfig } = await import("./infra/llm/runtimeConfig");
+    const normalizedProvider =
+      provider === "openai" || provider === "anthropic" || provider === "gemini" || provider === "ollama"
+        ? provider
+        : null;
+    setRuntimeLlmConfig({
+      provider: normalizedProvider,
+      apiKey: apiKey ?? null,
+      model: model ?? null,
+      baseURL: baseURL ?? null,
+    });
+
+    return { ok: true };
+  }
+
   if (method === "threads.create") {
     const params = requireParams(paramsRaw);
     const learning_mode = (params.learning_mode ?? null) as LearningMode | null;
