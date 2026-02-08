@@ -2,7 +2,8 @@ import { rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import type { JudgeResult } from "../../types";
 import { trace } from "../../utils/trace";
-import { execAsync, stripAnsi } from "../../judge/exec";
+import { getJudgeTimeoutMs, runDocker, stripAnsi } from "../../judge/docker";
+import { writeUserFiles } from "../../judge/files";
 import { mkCodemTmpDir } from "../../judge/tmp";
 
 function parsePytestFailures(output: string): { failed: string[]; errored: string[] } {
@@ -39,9 +40,7 @@ export async function runPythonJudgeFiles(userFiles: PythonFiles, testSuite: str
   const tmp = mkCodemTmpDir("codem-py-judge-");
 
   try {
-    for (const [filename, source] of Object.entries(userFiles)) {
-      writeFileSync(join(tmp, filename), source, "utf8");
-    }
+    writeUserFiles(tmp, userFiles);
 
     const testFilename = "test_solution.py";
     if (Object.prototype.hasOwnProperty.call(userFiles, testFilename)) {
@@ -58,21 +57,30 @@ export async function runPythonJudgeFiles(userFiles: PythonFiles, testSuite: str
 
     writeFileSync(join(tmp, testFilename), testSuite, "utf8");
 
-    const dockerCmd = [
-      "docker run --rm",
-      "--network none",
+    const args = [
+      "run",
+      "--rm",
+      "--network",
+      "none",
       "--read-only",
-      "--tmpfs /tmp:rw",
-      "-e PYTHONDONTWRITEBYTECODE=1",
-      "-e PYTHONHASHSEED=0",
-      "-e PYTHONUNBUFFERED=1",
-      "-e PYTEST_DISABLE_PLUGIN_AUTOLOAD=1",
-      `-v ${tmp}:/workspace:ro`,
-      "--workdir /workspace",
+      "--tmpfs",
+      "/tmp:rw",
+      "-e",
+      "PYTHONDONTWRITEBYTECODE=1",
+      "-e",
+      "PYTHONHASHSEED=0",
+      "-e",
+      "PYTHONUNBUFFERED=1",
+      "-e",
+      "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1",
+      "-v",
+      `${tmp}:/workspace:ro`,
+      "--workdir",
+      "/workspace",
       "codem-python-judge",
-    ].join(" ");
+    ];
 
-    const { stdout, stderr, exitCode, timedOut } = await execAsync(dockerCmd, tmp);
+    const { stdout, stderr, exitCode, timedOut } = await runDocker({ args, cwd: tmp, timeoutMs: getJudgeTimeoutMs() });
     trace("judge.result", { exitCode, timedOut, stdoutLen: stdout.length, stderrLen: stderr.length });
 
     const executionTimeMs = Date.now() - start;

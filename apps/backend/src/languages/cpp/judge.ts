@@ -2,7 +2,8 @@ import { rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import type { JudgeResult } from "../../types";
 import { trace } from "../../utils/trace";
-import { execAsync, stripAnsi } from "../../judge/exec";
+import { getJudgeTimeoutMs, runDocker, stripAnsi } from "../../judge/docker";
+import { writeUserFiles } from "../../judge/files";
 import { mkCodemTmpDir } from "../../judge/tmp";
 
 function parseCppRunner(stdout: string): { passed: string[]; failed: string[] } {
@@ -32,9 +33,7 @@ export async function runCppJudgeFiles(userFiles: CppFiles, testSuite: string): 
   const tmp = mkCodemTmpDir("codem-cpp-judge-");
 
   try {
-    for (const [filename, source] of Object.entries(userFiles)) {
-      writeFileSync(join(tmp, filename), source, "utf8");
-    }
+    writeUserFiles(tmp, userFiles);
 
     const testFilename = "test.cpp";
     if (Object.prototype.hasOwnProperty.call(userFiles, testFilename)) {
@@ -55,19 +54,26 @@ export async function runCppJudgeFiles(userFiles: CppFiles, testSuite: string): 
       "g++ -std=c++20 -O2 -pipe -Wall -Wextra -Wno-unused-parameter -o /tmp/test /workspace/test.cpp";
     const runCmd = "/tmp/test";
 
-    const dockerCmd = [
-      "docker run --rm",
-      "--network none",
+    const args = [
+      "run",
+      "--rm",
+      "--network",
+      "none",
       "--read-only",
-      "--tmpfs /tmp:rw,exec",
-      `-v ${tmp}:/workspace:ro`,
-      "--workdir /workspace",
-      "--entrypoint /bin/bash",
+      "--tmpfs",
+      "/tmp:rw,exec",
+      "-v",
+      `${tmp}:/workspace:ro`,
+      "--workdir",
+      "/workspace",
+      "--entrypoint",
+      "/bin/bash",
       "codem-cpp-judge",
-      `-lc \"${compileCmd} && ${runCmd}\"`,
-    ].join(" ");
+      "-lc",
+      `${compileCmd} && ${runCmd}`,
+    ];
 
-    const { stdout, stderr, exitCode, timedOut } = await execAsync(dockerCmd, tmp);
+    const { stdout, stderr, exitCode, timedOut } = await runDocker({ args, cwd: tmp, timeoutMs: getJudgeTimeoutMs() });
     trace("judge.result", { exitCode, timedOut, stdoutLen: stdout.length, stderrLen: stderr.length });
 
     const executionTimeMs = Date.now() - start;

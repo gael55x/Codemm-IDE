@@ -23,6 +23,18 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+function redactSecrets(text) {
+  const raw = typeof text === "string" ? text : String(text ?? "");
+  return raw
+    // OpenAI-style keys
+    .replace(/\bsk-[A-Za-z0-9]{10,}\b/g, "sk-[REDACTED]")
+    // Generic bearer tokens
+    .replace(/\bBearer\s+[A-Za-z0-9._-]{10,}\b/g, "Bearer [REDACTED]")
+    // JSON-ish fields we might accidentally stringify
+    .replace(/(\"apiKey\"\s*:\s*\")([^\"]+)(\")/gi, `$1[REDACTED]$3`)
+    .replace(/(\"apiKeyEncB64\"\s*:\s*\")([^\"]+)(\")/gi, `$1[REDACTED]$3`);
+}
+
 function expandTilde(p) {
   if (p === "~") return os.homedir();
   if (p.startsWith("~/") || p.startsWith("~\\")) return path.join(os.homedir(), p.slice(2));
@@ -1348,12 +1360,14 @@ async function createWindowAndBoot() {
 
   const baseEnv = { ...process.env };
   // Improve odds of finding docker from a GUI-launched app (PATH can be minimal on macOS).
+  baseEnv.DOCKER_PATH = dockerBin;
   if (dockerBin !== "docker") {
     const dockerDir = path.dirname(dockerBin);
-    baseEnv.PATH = baseEnv.PATH ? `${dockerDir}:${baseEnv.PATH}` : dockerDir;
+    const delim = path.delimiter || ":";
+    baseEnv.PATH = baseEnv.PATH ? `${dockerDir}${delim}${baseEnv.PATH}` : dockerDir;
   }
 
-  // Load locally stored LLM key (if configured) and inject it into the local engine process.
+  // Load locally stored LLM settings (if configured). Secrets never go to renderer JS.
   const secrets = loadSecrets({ userDataDir: storage.userDataDir }).llm;
 
   // Ensure monorepo dependencies exist (npm workspaces).
@@ -1564,22 +1578,22 @@ async function createWindowAndBoot() {
 process.on("uncaughtException", (err) => {
   // Best-effort: surface fatal errors if Electron started from a GUI context.
   try {
-    dialog.showErrorBox("Codemm-IDE Crashed", String(err?.stack || err?.message || err));
+    dialog.showErrorBox("Codemm-Desktop Crashed", redactSecrets(String(err?.stack || err?.message || err)));
   } catch {
     // ignore
   }
   // eslint-disable-next-line no-console
-  console.error(err);
+  console.error(redactSecrets(String(err?.stack || err?.message || err)));
 });
 
 process.on("unhandledRejection", (err) => {
   try {
-    dialog.showErrorBox("Codemm-IDE Error", String(err?.stack || err?.message || err));
+    dialog.showErrorBox("Codemm-Desktop Error", redactSecrets(String(err?.stack || err?.message || err)));
   } catch {
     // ignore
   }
   // eslint-disable-next-line no-console
-  console.error(err);
+  console.error(redactSecrets(String(err?.stack || err?.message || err)));
 });
 
 app.whenReady().then(() => {

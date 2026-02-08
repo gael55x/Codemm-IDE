@@ -2,7 +2,8 @@ import { rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import type { JudgeResult } from "../../types";
 import { trace } from "../../utils/trace";
-import { execAsync, stripAnsi } from "../../judge/exec";
+import { getJudgeTimeoutMs, runDocker, stripAnsi } from "../../judge/docker";
+import { writeUserFiles } from "../../judge/files";
 import { mkCodemTmpDir } from "../../judge/tmp";
 
 function parseJUnitTree(stdout: string): { passed: string[]; failed: string[] } {
@@ -46,9 +47,22 @@ export async function runJavaJudge(userCode: string, testSuite: string): Promise
     writeFileSync(join(tmp, `${userClassName}.java`), userCode, "utf8");
     writeFileSync(join(tmp, `${testClassName}.java`), testSuite, "utf8");
 
-    const dockerCmd = ["docker run --rm", `-v ${tmp}:/workspace`, "codem-java-judge"].join(" ");
+    const args = [
+      "run",
+      "--rm",
+      "--network",
+      "none",
+      "--read-only",
+      "--tmpfs",
+      "/tmp:rw",
+      "-v",
+      `${tmp}:/workspace`,
+      "--workdir",
+      "/workspace",
+      "codem-java-judge",
+    ];
 
-    const { stdout, stderr, exitCode, timedOut } = await execAsync(dockerCmd, tmp);
+    const { stdout, stderr, exitCode, timedOut } = await runDocker({ args, cwd: tmp, timeoutMs: getJudgeTimeoutMs() });
     trace("judge.result", { exitCode, timedOut, stdoutLen: stdout.length, stderrLen: stderr.length });
 
     const executionTimeMs = Date.now() - start;
@@ -83,9 +97,7 @@ export async function runJavaJudgeFiles(userFiles: JavaFiles, testSuite: string)
   const tmp = mkCodemTmpDir("codem-judge-");
 
   try {
-    for (const [filename, source] of Object.entries(userFiles)) {
-      writeFileSync(join(tmp, filename), source, "utf8");
-    }
+    writeUserFiles(tmp, userFiles);
 
     const testClassName = inferClassName(testSuite, "UserTest");
     const testFilename = `${testClassName}.java`;
@@ -103,9 +115,22 @@ export async function runJavaJudgeFiles(userFiles: JavaFiles, testSuite: string)
 
     writeFileSync(join(tmp, testFilename), testSuite, "utf8");
 
-    const dockerCmd = ["docker run --rm", `-v ${tmp}:/workspace`, "codem-java-judge"].join(" ");
+    const args = [
+      "run",
+      "--rm",
+      "--network",
+      "none",
+      "--read-only",
+      "--tmpfs",
+      "/tmp:rw",
+      "-v",
+      `${tmp}:/workspace`,
+      "--workdir",
+      "/workspace",
+      "codem-java-judge",
+    ];
 
-    const { stdout, stderr, exitCode, timedOut } = await execAsync(dockerCmd, tmp);
+    const { stdout, stderr, exitCode, timedOut } = await runDocker({ args, cwd: tmp, timeoutMs: getJudgeTimeoutMs() });
     trace("judge.result", { exitCode, timedOut, stdoutLen: stdout.length, stderrLen: stderr.length });
 
     const executionTimeMs = Date.now() - start;

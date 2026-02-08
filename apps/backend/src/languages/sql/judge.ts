@@ -2,7 +2,7 @@ import { rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import type { JudgeResult } from "../../types";
 import { trace } from "../../utils/trace";
-import { execAsync, stripAnsi } from "../../judge/exec";
+import { getJudgeTimeoutMs, runDocker, stripAnsi } from "../../judge/docker";
 import { mkCodemTmpDir } from "../../judge/tmp";
 
 function parseSqlRunner(stdout: string): { passed: string[]; failed: string[] } {
@@ -29,17 +29,22 @@ export async function runSqlJudge(userSql: string, testSuiteJson: string): Promi
     writeFileSync(join(tmp, "solution.sql"), userSql, "utf8");
     writeFileSync(join(tmp, "test_suite.json"), testSuiteJson, "utf8");
 
-    const dockerCmd = [
-      "docker run --rm",
-      "--network none",
+    const args = [
+      "run",
+      "--rm",
+      "--network",
+      "none",
       "--read-only",
-      "--tmpfs /tmp:rw",
-      `-v ${tmp}:/workspace:ro`,
-      "--workdir /workspace",
+      "--tmpfs",
+      "/tmp:rw",
+      "-v",
+      `${tmp}:/workspace:ro`,
+      "--workdir",
+      "/workspace",
       "codem-sql-judge",
-    ].join(" ");
+    ];
 
-    const { stdout, stderr, exitCode, timedOut } = await execAsync(dockerCmd, tmp);
+    const { stdout, stderr, exitCode, timedOut } = await runDocker({ args, cwd: tmp, timeoutMs: getJudgeTimeoutMs() });
     trace("judge.result", { exitCode, timedOut, stdoutLen: stdout.length, stderrLen: stderr.length });
 
     const executionTimeMs = Date.now() - start;

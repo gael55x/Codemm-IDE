@@ -1,6 +1,7 @@
-import { exec } from "child_process";
 import { rmSync, writeFileSync } from "fs";
 import { join } from "path";
+import { runDocker } from "../../judge/docker";
+import { writeUserFiles } from "../../judge/files";
 import { inferClassName } from "../../utils/javaCodegen";
 import { mkCodemTmpDir } from "../../judge/tmp";
 
@@ -11,25 +12,6 @@ function getRunTimeoutMs(): number {
   if (!Number.isFinite(n) || n <= 0) return 8000;
   // Hard cap to avoid runaway local resource use.
   return Math.min(Math.floor(n), 30_000);
-}
-
-function execAsync(command: string, cwd: string): Promise<{ stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    exec(
-      command,
-      {
-        cwd,
-        timeout: getRunTimeoutMs(),
-        maxBuffer: 1024 * 1024,
-      },
-      (error, stdout, stderr) => {
-        if (error) {
-          return reject({ error, stdout, stderr });
-        }
-        resolve({ stdout, stderr });
-      }
-    );
-  });
 }
 
 export type RunResult = {
@@ -72,9 +54,7 @@ export async function runJavaFiles(opts: {
   const tmp = mkCodemTmpDir("codem-run-");
 
   try {
-    for (const [filename, source] of Object.entries(opts.files)) {
-      writeFileSync(join(tmp, filename), source, "utf8");
-    }
+    writeUserFiles(tmp, opts.files);
 
     const inferred = opts.mainClass ?? inferMainClassFromFiles(opts.files);
     const mainClass = inferred ? assertSafeJavaMainClassName(inferred) : null;
@@ -94,30 +74,31 @@ export async function runJavaFiles(opts: {
     const runCmd = hasStdin ? `java ${mainClass} < stdin.txt` : `java ${mainClass}`;
 
     // Reuse the existing judge image, but override ENTRYPOINT so it doesn't run JUnit.
-    const dockerCmd = [
-      "docker run --rm",
-      "--network none",
+    const args = [
+      "run",
+      "--rm",
+      "--network",
+      "none",
       "--read-only",
-      "--tmpfs /tmp:rw",
-      `-v ${tmp}:/workspace`,
-      "--workdir /workspace",
-      "--entrypoint /bin/bash",
+      "--tmpfs",
+      "/tmp:rw",
+      "-v",
+      `${tmp}:/workspace`,
+      "--workdir",
+      "/workspace",
+      "--entrypoint",
+      "/bin/bash",
       "codem-java-judge",
-      `-lc "javac *.java && ${runCmd}"`,
-    ].join(" ");
+      "-lc",
+      `javac *.java && ${runCmd}`,
+    ];
 
-    const { stdout, stderr } = await execAsync(dockerCmd, tmp);
+    const { stdout, stderr } = await runDocker({ args, cwd: tmp, timeoutMs: getRunTimeoutMs() });
     return { stdout, stderr };
   } catch (e: any) {
-    const msg =
-      typeof e?.error?.message === "string"
-        ? e.error.message
-        : typeof e?.message === "string"
-        ? e.message
-        : "";
     return {
-      stdout: e.stdout ?? "",
-      stderr: e.stderr ?? (msg || String(e.error ?? e)),
+      stdout: e?.stdout ?? "",
+      stderr: e?.stderr ?? String(e?.error ?? e),
     };
   } finally {
     rmSync(tmp, { recursive: true, force: true });

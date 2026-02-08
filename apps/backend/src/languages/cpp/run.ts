@@ -1,6 +1,7 @@
-import { exec } from "child_process";
 import { rmSync, writeFileSync } from "fs";
 import { join } from "path";
+import { runDocker } from "../../judge/docker";
+import { writeUserFiles } from "../../judge/files";
 import { mkCodemTmpDir } from "../../judge/tmp";
 
 function getRunTimeoutMs(): number {
@@ -9,25 +10,6 @@ function getRunTimeoutMs(): number {
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) return 8000;
   return Math.min(Math.floor(n), 30_000);
-}
-
-function execAsync(command: string, cwd: string): Promise<{ stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    exec(
-      command,
-      {
-        cwd,
-        timeout: getRunTimeoutMs(),
-        maxBuffer: 1024 * 1024,
-      },
-      (error, stdout, stderr) => {
-        if (error) {
-          return reject({ error, stdout, stderr });
-        }
-        resolve({ stdout, stderr });
-      }
-    );
-  });
 }
 
 export type RunResult = {
@@ -41,9 +23,7 @@ export async function runCppFiles(opts: { files: CppFiles; stdin?: string }): Pr
   const tmp = mkCodemTmpDir("codem-cpp-run-");
 
   try {
-    for (const [filename, source] of Object.entries(opts.files)) {
-      writeFileSync(join(tmp, filename), source, "utf8");
-    }
+    writeUserFiles(tmp, opts.files);
 
     if (!Object.prototype.hasOwnProperty.call(opts.files, "main.cpp")) {
       return {
@@ -61,30 +41,31 @@ export async function runCppFiles(opts: { files: CppFiles; stdin?: string }): Pr
       "g++ -std=c++20 -O2 -pipe -Wall -Wextra -Wno-unused-parameter -o /tmp/a.out *.cpp";
     const runCmd = hasStdin ? "/tmp/a.out < /workspace/stdin.txt" : "/tmp/a.out";
 
-    const dockerCmd = [
-      "docker run --rm",
-      "--network none",
+    const args = [
+      "run",
+      "--rm",
+      "--network",
+      "none",
       "--read-only",
-      "--tmpfs /tmp:rw,exec",
-      `-v ${tmp}:/workspace:ro`,
-      "--workdir /workspace",
-      "--entrypoint /bin/bash",
+      "--tmpfs",
+      "/tmp:rw,exec",
+      "-v",
+      `${tmp}:/workspace:ro`,
+      "--workdir",
+      "/workspace",
+      "--entrypoint",
+      "/bin/bash",
       "codem-cpp-judge",
-      `-lc "${compileCmd} && ${runCmd}"`,
-    ].join(" ");
+      "-lc",
+      `${compileCmd} && ${runCmd}`,
+    ];
 
-    const { stdout, stderr } = await execAsync(dockerCmd, tmp);
+    const { stdout, stderr } = await runDocker({ args, cwd: tmp, timeoutMs: getRunTimeoutMs() });
     return { stdout, stderr };
   } catch (e: any) {
-    const msg =
-      typeof e?.error?.message === "string"
-        ? e.error.message
-        : typeof e?.message === "string"
-        ? e.message
-        : "";
     return {
-      stdout: e.stdout ?? "",
-      stderr: e.stderr ?? (msg || String(e.error ?? e)),
+      stdout: e?.stdout ?? "",
+      stderr: e?.stderr ?? String(e?.error ?? e),
     };
   } finally {
     rmSync(tmp, { recursive: true, force: true });
