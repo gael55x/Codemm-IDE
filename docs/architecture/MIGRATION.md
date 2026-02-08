@@ -41,6 +41,7 @@ Status (as of 2026-02-08):
 - Frontend builds produce a standalone bundle (`output: "standalone"` + `prepare-standalone`).
 - IDE can boot the standalone frontend server when packaged (or when `CODEMM_FRONTEND_MODE=standalone`).
 - Packaged runs force the engine to load compiled `dist` (`CODEMM_ENGINE_USE_DIST=1`).
+- Packaging rebuilds native deps for Electron (`npm run dist:mac` runs `npm run rebuild:electron`).
 
 ## Transitional Compatibility Rules
 

@@ -124,7 +124,6 @@ Why it happens:
 Fix (packaging / dist):
 
 - From repo root:
-  - `npm run rebuild:electron`
   - `npm run dist:mac`
 
 Fix (dev):
