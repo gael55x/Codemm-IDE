@@ -19,6 +19,23 @@ let ipcWired = false;
 let currentWorkspace = null; // { workspaceDir, workspaceDataDir, backendDbPath, userDataDir }
 let engine = null; // { proc, call, onEvent, shutdown }
 
+function getPathKey(env) {
+  if (!env || typeof env !== "object") return "PATH";
+  const found = Object.keys(env).find((k) => k.toLowerCase() === "path");
+  return found || "PATH";
+}
+
+function prependToPath(env, dir) {
+  const key = getPathKey(env);
+  const delim = path.delimiter || ":";
+  const cur = typeof env[key] === "string" ? env[key] : "";
+  env[key] = cur ? `${dir}${delim}${cur}` : dir;
+}
+
+function getNpmBin() {
+  return process.platform === "win32" ? "npm.cmd" : "npm";
+}
+
 function tryRegisterIpcHandler(channel, handler) {
   try {
     ipcMain.handle(channel, handler);
@@ -156,6 +173,15 @@ async function resolveWorkspace({ userDataDir }) {
 }
 
 function resolveWorkspaceDataDir({ userDataDir, workspaceDir }) {
+  const explicit =
+    typeof process.env.CODEMM_WORKSPACE_DATA_DIR === "string"
+      ? process.env.CODEMM_WORKSPACE_DATA_DIR.trim()
+      : "";
+  if (explicit) {
+    const dir = path.isAbsolute(explicit) ? path.resolve(explicit) : path.resolve(workspaceDir, explicit);
+    if (tryMakeDirWritable(dir)) return dir;
+  }
+
   const local = path.join(workspaceDir, ".codemm");
   if (tryMakeDirWritable(local)) return local;
 
@@ -729,7 +755,7 @@ async function ensureNodeModules({ dir, label, env }) {
   }
 
   console.log(`[ide] ${label}: installing npm dependencies...`);
-  const child = spawn("npm", ["install"], {
+  const child = spawn(getNpmBin(), ["install"], {
     cwd: dir,
     env,
     stdio: ["ignore", "pipe", "pipe"],
@@ -811,6 +837,13 @@ async function createWindowAndBoot() {
   console.log(`[ide] repoRoot=${repoRoot}`);
   console.log(`[ide] backendDir=${backendDir}`);
   console.log(`[ide] frontendDir=${frontendDir}`);
+
+  // Dev ergonomics: default the workspace to the repo root (so `.codemm/` doesn't end up
+  // in a parent folder like "Documents"). Developers can override with CODEMM_WORKSPACE_DIR,
+  // or use the workspace chooser IPC later.
+  if (!app.isPackaged && !process.env.CODEMM_WORKSPACE_DIR) {
+    process.env.CODEMM_WORKSPACE_DIR = repoRoot;
+  }
 
   const dockerBin = findDockerBinary();
   if (!dockerBin) {
@@ -1386,8 +1419,7 @@ async function createWindowAndBoot() {
   baseEnv.DOCKER_PATH = dockerBin;
   if (dockerBin !== "docker") {
     const dockerDir = path.dirname(dockerBin);
-    const delim = path.delimiter || ":";
-    baseEnv.PATH = baseEnv.PATH ? `${dockerDir}${delim}${baseEnv.PATH}` : dockerDir;
+    prependToPath(baseEnv, dockerDir);
   }
 
   // Load locally stored LLM settings (if configured). Secrets never go to renderer JS.
@@ -1538,7 +1570,7 @@ async function createWindowAndBoot() {
     frontendProc.unref();
   } else {
     console.log(`[ide] Starting frontend (dev) on ${frontendUrl}...`);
-    frontendProc = spawn("npm", ["--workspace", "codem-frontend", "run", "dev", "--", "-p", String(frontendPort), "-H", "127.0.0.1"], {
+    frontendProc = spawn(getNpmBin(), ["--workspace", "codem-frontend", "run", "dev", "--", "-p", String(frontendPort), "-H", "127.0.0.1"], {
       cwd: repoRoot,
       env: {
         ...baseEnv,
