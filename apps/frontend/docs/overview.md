@@ -1,23 +1,23 @@
 # Overview
 
-Codemm Frontend is the Next.js UI for interacting with Codemm’s backend:
+Codemm Frontend is the Next.js renderer UI that runs inside Codemm-IDE (Electron).
 
-- create and continue sessions (the spec-building loop)
-- generate activities once a session is ready
-- solve activities and run/submit code against the backend judge
-- view profile, activity history, and community-published activities
+- create and continue threads (the spec-building loop)
+- generate activities once a thread spec is ready
+- solve activities and run/submit code against the local Docker judge
+- browse locally generated activities (“Your activities”)
 
 ## What the frontend does (and does not do)
 
-The frontend is responsible for UX, not decision-making:
+The renderer is responsible for UX, not decision-making:
 
 - It **does**:
-  - send user messages to the backend
+  - send user messages to the local engine (via `window.codemm.*`)
   - render `nextQuestion` and `questionKey`
   - render a view of the current spec snapshot
-  - subscribe to generation progress via SSE
-  - call `/run` and `/submit` and render results
-  - handle auth and per-user LLM key settings pages
+  - subscribe to generation progress via IPC event stream
+  - call local judge actions (`judge.run`, `judge.submit`) and render results
+  - provide a local API key settings screen (the key is not exposed to renderer JS)
 - It **does not**:
   - infer spec gaps or next questions locally
   - apply patches to durable state
@@ -27,10 +27,4 @@ This split ensures consistency across clients and makes backend behavior auditab
 
 ## Where the “agent” lives
 
-The agentic logic (planning, gating, validation, retries) is implemented in the backend.
-
-If you are changing agent behavior, the canonical docs are in the backend repo:
-
-- `https://github.com/gael55x/Codem-backend` → `docs/agentic-design/index.md`
-
-The frontend docs describe how to consume the backend contracts safely and predictably.
+The agentic logic (planning, gating, validation, retries) is implemented in the local engine (`apps/backend`).

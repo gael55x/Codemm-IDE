@@ -1,32 +1,34 @@
-# Error Handling (Frontend)
+# Error Handling (Renderer)
 
-This document defines how the frontend should interpret backend errors and recover predictably.
+This document defines how the renderer should interpret engine/judge errors and recover predictably.
 
-## HTTP errors
+Codemm-IDE is local-only and uses an Electron preload bridge (`window.codemm.*`). There is no internal HTTP API and no SSE.
 
-Recommended behavior:
-
-- `400`: treat as user-correctable (show message; keep user input; allow retry).
-- `401`: prompt login (do not retry blindly).
-- `403`: show “not authorized” and route the user appropriately.
-- `404`: show “not found” and provide navigation back to home/community.
-- `409`: show conflict/state message and prompt user to continue the session or refresh.
-- `5xx`: show retry UI and preserve context.
-
-## SSE errors
-
-Progress streams can disconnect for normal reasons (network drops, browser backgrounding).
+## IPC call errors
 
 Recommended behavior:
 
-- treat disconnects as recoverable
-- reconnect and dedupe events by `slotIndex` + `type`
-- show a clear terminal state only when a terminal event is received or generation is known to be over
+- treat invalid input errors as user-correctable (show message; keep user input; allow retry).
+- treat engine lifecycle errors (“Engine unavailable”, “Engine exited”) as terminal and prompt the user to relaunch.
+- avoid infinite retry loops; prefer a “Retry” button with a clear error message.
 
-## Auth token errors
+## Generation stream errors
 
-If the frontend stores an expired or invalid token:
+Progress events are delivered via IPC subscription and may stop if:
 
-- `/auth/me` may fail; treat it as “logged out” and clear local auth state.
-- subsequent auth-required calls should not be spam-retried.
+- the engine exits
+- the thread unsubscribes / renderer navigates away
 
+Recommended behavior:
+
+- treat “no progress events yet” as recoverable for a short grace period
+- if generation fails, show the terminal `generation_failed` error and keep the thread state
+
+## Judge errors
+
+Judge failures may include compilation errors, test failures, or timeouts.
+
+Recommended behavior:
+
+- render stdout/stderr verbatim (strip ANSI if needed)
+- keep the student’s code intact and allow re-run/re-submit

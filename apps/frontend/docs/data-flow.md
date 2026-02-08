@@ -1,94 +1,74 @@
-# Data Flow (Frontend)
+# Data Flow (Renderer)
 
-This document describes frontend workflows and how they map to backend APIs. It is written in terms of client behavior and backend contracts (not prompt content).
+This document describes renderer workflows and how they map to the IDE bridge (`window.codemm`).
 
-## 1) Start a session
+Codemm-IDE is local-only: no auth, no accounts, no community browsing, no internal HTTP API.
+
+## 1) Start a thread
 
 Workflow:
 
-1. `POST /sessions` (optional `learning_mode`)
+1. `window.codemm.threads.create({ learning_mode })`
 2. Render the returned `nextQuestion` and initialize the chat transcript.
 
-Client invariant:
+Invariant:
 
-- the backend controls session state; the frontend does not invent a session locally.
+- the engine controls thread state; the renderer does not invent state locally.
 
 ## 2) Send a message (spec-building loop)
 
 Workflow:
 
-1. `POST /sessions/:id/messages` with `{ message }`
+1. `window.codemm.threads.postMessage({ threadId, message })`
 2. Render:
-   - assistant response (backend-provided `nextQuestion`)
-   - the returned `questionKey` as the UI’s next “prompt target”
+   - assistant response (`nextQuestion`)
+   - returned `questionKey` (UI’s next “prompt target”)
    - current `spec` snapshot (optional UI panel)
 3. Continue until `done=true`.
 
-Client invariant:
+Invariant:
 
-- `questionKey` is authoritative. The UI should not parse assistant prose to infer what to ask next.
+- `questionKey` is authoritative. The renderer should not parse assistant prose to infer what to ask next.
 
-## 3) Generate an activity (long-running)
+## 3) Optional: custom generation focus
 
 Workflow:
 
-1. Open an `EventSource` to `GET /sessions/:id/generate/stream`.
-2. Trigger generation with `POST /sessions/:id/generate` (auth required).
+- `window.codemm.threads.setInstructions({ threadId, instructions_md })`
+
+Notes:
+
+- `instructions_md` is persisted locally in the workspace DB and is used as a best-effort shaping signal during generation.
+- Do not include secrets.
+
+## 4) Generate an activity (long-running)
+
+Workflow:
+
+1. Subscribe: `window.codemm.threads.subscribeGeneration({ threadId, onEvent })`
+2. Trigger: `window.codemm.threads.generate({ threadId })`
 3. Update UI based on structured progress events:
    - slot started
-   - validation started/failed
+   - contract validated/failed
+   - Docker validation started/failed
    - slot completed
    - generation completed/failed
 
-Client invariants:
+Invariants:
 
-- progress events are additive and may evolve; ignore unknown event types.
-- handle reconnects and avoid duplicating state (use `slotIndex` and `activityId` keys).
+- progress events are append-only and replayable; ignore unknown event types.
+- dedupe by `slotIndex` + event type if needed.
 
-## 4) Load and solve an activity
+## 5) List and solve activities
 
 Workflow:
 
-1. `GET /activities/:id`
-2. Render problems and their scaffolds/tests (as persisted by the backend).
+1. List: `window.codemm.activities.list({ limit })`
+2. Load: `window.codemm.activities.get({ id })`
 3. Provide run/submit actions:
-   - `POST /run` for fast execution-only
-   - `POST /submit` for graded submission with tests
+   - `window.codemm.judge.run(...)` for fast execution-only
+   - `window.codemm.judge.submit(...)` for graded submission with tests
 
-Client invariant:
+Invariant:
 
-- the backend judge is the source of truth for correctness; do not attempt to “simulate” test results in the browser.
-
-## 5) Authentication and profile
-
-Workflow:
-
-- Register: `POST /auth/register`
-- Login: `POST /auth/login`
-- Current user: `GET /auth/me`
-- Profile page: `GET /profile`
-
-Client invariants:
-
-- store tokens securely (current implementation uses a straightforward client storage approach; do not assume HTTP-only cookies unless implemented)
-- include `Authorization: Bearer <token>` on auth-required requests
-
-## 6) Per-user LLM key settings
-
-Workflow:
-
-- Read status: `GET /profile/llm`
-- Set: `PUT /profile/llm`
-- Clear: `DELETE /profile/llm`
-
-Client invariant:
-
-- these endpoints may return an error if the backend is not configured for encrypted storage; handle gracefully and explain configuration requirements.
-
-## 7) Community browsing
-
-Workflow:
-
-- List: `GET /community/activities`
-- View: `GET /community/activities/:id`
-
+- the judge is the source of truth for correctness; do not simulate test results in the renderer.

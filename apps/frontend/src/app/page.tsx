@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { History as HistoryIcon, Moon, Sun, X } from "lucide-react";
+import { History as HistoryIcon, LayoutGrid, Moon, Sun, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSpecBuilderUX } from "@/lib/specBuilderUx";
@@ -81,6 +81,12 @@ export default function Home() {
   const [progressHint, setProgressHint] = useState<string | null>(null);
   const progressRef = useRef<null | { unsubscribe: () => Promise<void> }>(null);
 
+  const [instructionsOpen, setInstructionsOpen] = useState(false);
+  const [instructionsSaved, setInstructionsSaved] = useState<string>("");
+  const [instructionsDraft, setInstructionsDraft] = useState<string>("");
+  const [instructionsSaving, setInstructionsSaving] = useState(false);
+  const [instructionsError, setInstructionsError] = useState<string | null>(null);
+
   const [tourOpen, setTourOpen] = useState(false);
   const tutorialSteps: TourStep[] = [
     {
@@ -146,6 +152,10 @@ export default function Home() {
       setMessages([]);
       setChatInput("");
       setHasInteracted(false);
+      setInstructionsOpen(false);
+      setInstructionsSaved("");
+      setInstructionsDraft("");
+      setInstructionsError(null);
 
       const data = await requireThreadsApi().create({ learning_mode: mode });
 
@@ -182,6 +192,10 @@ export default function Home() {
       setMessages([]);
       setChatInput("");
       setHasInteracted(false);
+      setInstructionsOpen(false);
+      setInstructionsSaved("");
+      setInstructionsDraft("");
+      setInstructionsError(null);
 
       const data = await requireThreadsApi().get({ threadId: existingSessionId });
 
@@ -194,6 +208,10 @@ export default function Home() {
       const state = String(data?.state ?? "");
       setSpecReady(state === "READY" || state === "GENERATING" || state === "SAVED");
       setGenerationLocked(state === "GENERATING");
+
+      const instr = typeof data?.instructions_md === "string" ? data.instructions_md : "";
+      setInstructionsSaved(instr);
+      setInstructionsDraft(instr);
 
       if (Array.isArray(data?.messages)) {
         const loaded: ChatMessage[] = data.messages
@@ -212,6 +230,23 @@ export default function Home() {
       const storedMode = localStorage.getItem("codem-last-learning-mode");
       const fallbackMode: LearningMode = storedMode === "guided" ? "guided" : "practice";
       await startNewSession(fallbackMode);
+    }
+  }
+
+  async function saveInstructions(nextText: string) {
+    if (!threadId) return;
+    setInstructionsSaving(true);
+    setInstructionsError(null);
+    try {
+      const trimmed = nextText.trim();
+      const normalized = trimmed.length ? trimmed : null;
+      await requireThreadsApi().setInstructions({ threadId, instructions_md: normalized });
+      setInstructionsSaved(trimmed);
+      setInstructionsDraft(trimmed);
+    } catch (e: any) {
+      setInstructionsError(e?.message ?? "Failed to save instructions.");
+    } finally {
+      setInstructionsSaving(false);
     }
   }
 
@@ -754,6 +789,17 @@ export default function Home() {
               History
             </button>
             <Link
+              href="/activities"
+              className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition ${
+                darkMode
+                  ? "bg-slate-800 text-slate-300 hover:bg-slate-700"
+                  : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+              }`}
+            >
+              <LayoutGrid className="h-4 w-4" />
+              Activities
+            </Link>
+            <Link
               href="/settings/llm"
               className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${
                 darkMode
@@ -988,6 +1034,89 @@ export default function Home() {
                   darkMode ? "border-slate-800" : "border-slate-200"
                 }`}
               >
+                {threadId && (
+                  <div
+                    className={`rounded-2xl border px-4 py-3 text-sm ${
+                      darkMode
+                        ? "border-slate-800 bg-slate-900/60 text-slate-200"
+                        : "border-slate-200 bg-slate-50 text-slate-700"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="font-semibold">Problem focus (optional)</div>
+                      <button
+                        type="button"
+                        onClick={() => setInstructionsOpen((v) => !v)}
+                        className={`rounded-full border px-3 py-1 text-xs transition ${
+                          darkMode
+                            ? "border-slate-800 bg-slate-950/40 text-slate-200 hover:bg-slate-900"
+                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100"
+                        }`}
+                        disabled={generationLocked || instructionsSaving}
+                      >
+                        {instructionsOpen ? "Hide" : "Show"}
+                      </button>
+                    </div>
+
+                    {instructionsOpen && (
+                      <div className="mt-3 space-y-2">
+                        <textarea
+                          className={`w-full resize-none rounded-xl border px-3 py-2 text-xs outline-none transition focus:ring-1 ${
+                            darkMode
+                              ? "border-slate-800 bg-slate-950/40 text-slate-100 placeholder-slate-500 focus:border-sky-400 focus:ring-sky-400"
+                              : "border-slate-200 bg-white text-slate-900 placeholder-slate-400 focus:border-sky-500 focus:ring-sky-500"
+                          }`}
+                          placeholder={`Example:\nFocus the problems around this code / API:\n\n\`\`\`java\nclass LRUCache { ... }\n\`\`\`\n\nAvoid graphs. Prefer hash maps and linked lists.`}
+                          rows={6}
+                          value={instructionsDraft}
+                          onChange={(e) => setInstructionsDraft(e.target.value)}
+                          disabled={generationLocked || instructionsSaving}
+                        />
+                        <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                          <div className="opacity-80">
+                            Used during <span className="font-semibold">Generate</span>. Don’t paste API keys.
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => void saveInstructions(instructionsDraft)}
+                              disabled={
+                                generationLocked ||
+                                instructionsSaving ||
+                                instructionsDraft.trim() === instructionsSaved.trim()
+                              }
+                              className={`rounded-full px-3 py-1 font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                                darkMode ? "bg-sky-600 hover:bg-sky-500" : "bg-slate-900 hover:bg-black"
+                              }`}
+                            >
+                              {instructionsSaving ? "Saving..." : "Save"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setInstructionsDraft("");
+                                void saveInstructions("");
+                              }}
+                              disabled={generationLocked || instructionsSaving}
+                              className={`rounded-full border px-3 py-1 transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                                darkMode
+                                  ? "border-slate-800 bg-slate-950/40 text-slate-200 hover:bg-slate-900"
+                                  : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100"
+                              }`}
+                            >
+                              Clear
+                            </button>
+                          </div>
+                        </div>
+                        {instructionsError && (
+                          <div className={darkMode ? "text-rose-200" : "text-rose-700"}>
+                            {instructionsError}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
                 <textarea
                   className={`w-full resize-none rounded-2xl border px-4 py-3 text-sm outline-none transition focus:ring-1 ${
                     darkMode
