@@ -94,6 +94,10 @@ type FeedbackState = {
   result: JudgeResult | RunResult;
 };
 
+function clampNumber(n: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, n));
+}
+
 function requireActivitiesApi() {
   const api = (window as any)?.codemm?.activities;
   if (!api) throw new Error("IDE bridge unavailable. Launch this UI inside Codemm-Desktop.");
@@ -330,6 +334,9 @@ export default function ActivityPage() {
   const activityId = params.id;
   const router = useRouter();
 
+  const layoutRef = useRef<HTMLDivElement | null>(null);
+  const rightPaneRef = useRef<HTMLDivElement | null>(null);
+
   const [activity, setActivity] = useState<Activity | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -367,6 +374,27 @@ export default function ActivityPage() {
   const monacoRef = useRef<any>(null);
   const todoDecorationsRef = useRef<string[]>([]);
 
+  const LAYOUT_DEFAULTS = {
+    leftWidth: 360,
+    rightWidth: 380,
+    rightTopHeight: 190,
+  };
+  const [leftPaneWidth, setLeftPaneWidth] = useState<number>(LAYOUT_DEFAULTS.leftWidth);
+  const [rightPaneWidth, setRightPaneWidth] = useState<number>(LAYOUT_DEFAULTS.rightWidth);
+  const [rightTopHeight, setRightTopHeight] = useState<number>(LAYOUT_DEFAULTS.rightTopHeight);
+
+  const dragRef = useRef<
+    | null
+    | {
+        kind: "left" | "right" | "rightRow";
+        startX: number;
+        startY: number;
+        startLeft: number;
+        startRight: number;
+        startRightTop: number;
+      }
+  >(null);
+
   const workspacesRef = useRef<
     Record<
       string,
@@ -401,6 +429,51 @@ export default function ActivityPage() {
   }, [entrypointClass]);
 
   useEffect(() => {
+    // Persist the user's layout per-activity (local-only).
+    if (!activityId) return;
+    const key = `codemm-activity-layout:v1:${activityId}`;
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object") return;
+      if (parsed.v !== 1) return;
+      if (typeof parsed.leftWidth === "number" && Number.isFinite(parsed.leftWidth)) {
+        setLeftPaneWidth(parsed.leftWidth);
+      }
+      if (typeof parsed.rightWidth === "number" && Number.isFinite(parsed.rightWidth)) {
+        setRightPaneWidth(parsed.rightWidth);
+      }
+      if (typeof parsed.rightTopHeight === "number" && Number.isFinite(parsed.rightTopHeight)) {
+        setRightTopHeight(parsed.rightTopHeight);
+      }
+    } catch {
+      // ignore
+    }
+  }, [activityId]);
+
+  useEffect(() => {
+    if (!activityId) return;
+    const key = `codemm-activity-layout:v1:${activityId}`;
+    const id = window.setTimeout(() => {
+      try {
+        localStorage.setItem(
+          key,
+          JSON.stringify({
+            v: 1,
+            leftWidth: Math.round(leftPaneWidth),
+            rightWidth: Math.round(rightPaneWidth),
+            rightTopHeight: Math.round(rightTopHeight),
+          })
+        );
+      } catch {
+        // ignore
+      }
+    }, 150);
+    return () => window.clearTimeout(id);
+  }, [activityId, leftPaneWidth, rightPaneWidth, rightTopHeight]);
+
+  useEffect(() => {
     if (!addFileOpen) return;
     // Avoid Next dev overlay runtime errors (prompt/confirm) by using a controlled modal.
     // Focus after the modal is mounted.
@@ -414,6 +487,68 @@ export default function ActivityPage() {
     setAddFileName("");
     setAddFileError(null);
   }, [selectedProblemId]);
+
+  function getLayoutMetrics() {
+    const containerWidth = layoutRef.current?.getBoundingClientRect().width ?? window.innerWidth;
+    const rightPaneHeight = rightPaneRef.current?.getBoundingClientRect().height ?? 0;
+    return { containerWidth, rightPaneHeight };
+  }
+
+  function beginDrag(kind: "left" | "right" | "rightRow", e: React.PointerEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    dragRef.current = {
+      kind,
+      startX: e.clientX,
+      startY: e.clientY,
+      startLeft: leftPaneWidth,
+      startRight: rightPaneWidth,
+      startRightTop: rightTopHeight,
+    };
+  }
+
+  function onDrag(e: React.PointerEvent) {
+    const drag = dragRef.current;
+    if (!drag) return;
+    const { containerWidth, rightPaneHeight } = getLayoutMetrics();
+
+    const SPLITTER_W = 10;
+    const MIN_LEFT = 280;
+    const MIN_RIGHT = 300;
+    const MIN_CENTER = 520;
+
+    if (drag.kind === "left") {
+      const deltaX = e.clientX - drag.startX;
+      const maxLeft = Math.max(MIN_LEFT, containerWidth - MIN_CENTER - drag.startRight - SPLITTER_W * 2);
+      setLeftPaneWidth(clampNumber(drag.startLeft + deltaX, MIN_LEFT, maxLeft));
+      return;
+    }
+
+    if (drag.kind === "right") {
+      const deltaX = e.clientX - drag.startX;
+      const maxRight = Math.max(MIN_RIGHT, containerWidth - MIN_CENTER - drag.startLeft - SPLITTER_W * 2);
+      setRightPaneWidth(clampNumber(drag.startRight - deltaX, MIN_RIGHT, maxRight));
+      return;
+    }
+
+    if (drag.kind === "rightRow") {
+      const SPLITTER_H = 10;
+      const MIN_TOP = 120;
+      const MIN_BOTTOM = 220;
+      if (!rightPaneHeight) return;
+      const deltaY = e.clientY - drag.startY;
+      const maxTop = Math.max(MIN_TOP, rightPaneHeight - MIN_BOTTOM - SPLITTER_H);
+      setRightTopHeight(clampNumber(drag.startRightTop + deltaY, MIN_TOP, maxTop));
+    }
+  }
+
+  function endDrag(e: React.PointerEvent) {
+    if (!dragRef.current) return;
+    e.preventDefault();
+    e.stopPropagation();
+    dragRef.current = null;
+  }
 
   function updateTodoDecorations(nextCode: string) {
     const editor = editorRef.current;
@@ -1092,14 +1227,17 @@ export default function ActivityPage() {
           </div>
         </header>
 
-        {/* Main layout */}
-        <main className="grid flex-1 min-h-0 gap-4 md:grid-cols-[minmax(260px,1.1fr)_minmax(0,3.2fr)_minmax(280px,1.3fr)]">
-          {/* Left: context only (active problem) */}
-          <section className="flex min-h-0 flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-            {(() => {
-              const idx = Math.max(0, activity.problems.findIndex((p) => p.id === selectedProblemId));
-              const activeStatus: ProblemStatus =
-                (selectedProblemId && problemStatusById[selectedProblemId]) || "not_started";
+	        {/* Main layout */}
+	        <main ref={layoutRef} className="flex flex-1 min-h-0">
+	          {/* Left: context only (active problem) */}
+	          <section
+	            className="flex min-h-0 flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4"
+	            style={{ width: leftPaneWidth }}
+	          >
+	            {(() => {
+	              const idx = Math.max(0, activity.problems.findIndex((p) => p.id === selectedProblemId));
+	              const activeStatus: ProblemStatus =
+	                (selectedProblemId && problemStatusById[selectedProblemId]) || "not_started";
 
               const statusBadge =
                 activeStatus === "passed"
@@ -1210,15 +1348,26 @@ export default function ActivityPage() {
                     </div>
                   </>
                 );
-              })()}
-            </div>
-          </section>
+	              })()}
+	            </div>
+	          </section>
 
-          {/* Center: work area */}
-          <section className="flex min-h-0 flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4">
-            <div className="flex flex-wrap items-center justify-between gap-2 pb-1">
-              <div className="flex flex-wrap items-center gap-2">
-                {Object.keys(files).map((filename) => (
+	          {/* Drag handle: left/center */}
+	          <div
+	            className="group flex w-[10px] shrink-0 cursor-col-resize items-stretch"
+	            onPointerDown={(e) => beginDrag("left", e)}
+	            onPointerMove={onDrag}
+	            onPointerUp={endDrag}
+	            onPointerCancel={endDrag}
+	          >
+	            <div className="mx-auto my-4 w-px rounded-full bg-slate-200 group-hover:bg-slate-300" />
+	          </div>
+
+	          {/* Center: work area */}
+	          <section className="flex min-h-0 min-w-[520px] flex-1 flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4">
+	            <div className="flex flex-wrap items-center justify-between gap-2 pb-1">
+	              <div className="flex flex-wrap items-center gap-2">
+	                {Object.keys(files).map((filename) => (
                   <button
                     key={filename}
                     onClick={() => {
@@ -1332,83 +1481,90 @@ export default function ActivityPage() {
                   readOnly: isActiveReadonly,
                 }}
               />
-            </div>
-          </section>
+	            </div>
+	          </section>
 
-          {/* Right: progress + feedback */}
-          <section className="flex min-h-0 flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-xs">
-            {/* Progress (problem list) */}
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-              {(() => {
-                const total = activity.problems.length;
-                const passed = activity.problems.filter((p) => problemStatusById[p.id] === "passed").length;
-                return (
-                  <div className="flex items-center justify-between">
-                    <h2 className="text-sm font-semibold text-slate-900">Progress</h2>
-                    <span className="text-[11px] font-medium text-slate-600">
-                      {passed}/{total} passed
-                    </span>
-                  </div>
-                );
-              })()}
-              <div className="mt-2 max-h-[34vh] min-h-[160px] overflow-auto pr-1">
-                <div className="space-y-2">
-                  {activity.problems.map((p, i) => {
-                    const status: ProblemStatus = problemStatusById[p.id] ?? "not_started";
-                    const active = selectedProblemId === p.id;
-                    const badge =
-                      status === "passed"
-                        ? "bg-emerald-50 text-emerald-800 border-emerald-200"
-                        : status === "failed"
-                        ? "bg-rose-50 text-rose-800 border-rose-200"
-                        : status === "in_progress"
-                        ? "bg-blue-50 text-blue-800 border-blue-200"
-                        : "bg-white text-slate-700 border-slate-200";
-                    const label =
-                      status === "passed"
-                        ? "passed"
-                        : status === "failed"
-                        ? "failed"
-                        : status === "in_progress"
-                        ? "in progress"
-                        : "not started";
+	          {/* Drag handle: center/right */}
+	          <div
+	            className="group flex w-[10px] shrink-0 cursor-col-resize items-stretch"
+	            onPointerDown={(e) => beginDrag("right", e)}
+	            onPointerMove={onDrag}
+	            onPointerUp={endDrag}
+	            onPointerCancel={endDrag}
+	          >
+	            <div className="mx-auto my-4 w-px rounded-full bg-slate-200 group-hover:bg-slate-300" />
+	          </div>
 
-                    return (
-                      <button
-                        key={p.id}
-                        onClick={() => selectProblem(p)}
-                        className={`w-full rounded-xl border px-3 py-2 text-left transition ${
-                          active ? "border-blue-500 bg-white shadow-sm" : "border-slate-200 bg-white hover:bg-slate-50"
-                        }`}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="shrink-0 rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-700">
-                                P{i + 1}
-                              </span>
-                              <span className="truncate text-xs font-semibold text-slate-900">{p.title}</span>
-                            </div>
-                          </div>
-                          <span className={`shrink-0 rounded-full border px-2.5 py-0.5 text-[10px] font-semibold ${badge}`}>
-                            {label}
-                          </span>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
+	          {/* Right: navigation + feedback/tests */}
+	          <section
+	            ref={rightPaneRef}
+	            className="flex min-h-0 flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-xs"
+	            style={{ width: rightPaneWidth }}
+	          >
+	            {/* Top: problem navigation */}
+	            <div
+	              className="min-h-[120px] overflow-auto rounded-xl border border-slate-200 bg-slate-50 p-3"
+	              style={{ height: rightTopHeight }}
+	            >
+	              {(() => {
+	                const total = activity.problems.length;
+	                const passed = activity.problems.filter((p) => problemStatusById[p.id] === "passed").length;
+	                return (
+	                  <div className="flex items-center justify-between">
+	                    <div className="flex items-center gap-2">
+	                      <h2 className="text-sm font-semibold text-slate-900">Item Navigation</h2>
+	                      <span className="text-[11px] font-medium text-slate-500">{passed}/{total} passed</span>
+	                    </div>
+	                  </div>
+	                );
+	              })()}
+	              <div className="mt-3 flex flex-wrap gap-2">
+	                {activity.problems.map((p, i) => {
+	                  const status: ProblemStatus = problemStatusById[p.id] ?? "not_started";
+	                  const active = selectedProblemId === p.id;
+	                  const styles =
+	                    status === "passed"
+	                      ? "border-emerald-300 bg-emerald-50 text-emerald-900"
+	                      : status === "failed"
+	                      ? "border-rose-300 bg-rose-50 text-rose-900"
+	                      : status === "in_progress"
+	                      ? "border-blue-300 bg-blue-50 text-blue-900"
+	                      : "border-slate-200 bg-white text-slate-800";
+	                  return (
+	                    <button
+	                      key={p.id}
+	                      onClick={() => selectProblem(p)}
+	                      title={p.title}
+	                      className={`flex h-9 w-9 items-center justify-center rounded-lg border text-xs font-semibold shadow-sm transition ${
+	                        active ? "ring-2 ring-blue-500 ring-offset-1" : "hover:bg-slate-50"
+	                      } ${styles}`}
+	                    >
+	                      {i + 1}
+	                    </button>
+	                  );
+	                })}
+	              </div>
+	            </div>
 
-            {/* Feedback (persists across problem switching unless cleared) */}
-            <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-slate-200 bg-white p-3">
-              <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-slate-900">Feedback</h2>
-                <div className="flex items-center gap-2">
-                  {isJudgeResult(feedbackResult) && (
-                    <span className="rounded-full bg-slate-100 px-3 py-1 font-mono text-[11px] text-slate-700">
-                      {feedbackResult.executionTimeMs?.toFixed(0)} ms
+	            {/* Drag handle: right top/bottom */}
+	            <div
+	              className="group flex h-[10px] shrink-0 cursor-row-resize items-center"
+	              onPointerDown={(e) => beginDrag("rightRow", e)}
+	              onPointerMove={onDrag}
+	              onPointerUp={endDrag}
+	              onPointerCancel={endDrag}
+	            >
+	              <div className="mx-2 h-px w-full rounded-full bg-slate-200 group-hover:bg-slate-300" />
+	            </div>
+
+	            {/* Bottom: feedback (persists across problem switching unless cleared) */}
+	            <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-slate-200 bg-white p-3">
+	              <div className="flex items-center justify-between">
+	                <h2 className="text-sm font-semibold text-slate-900">Tests & feedback</h2>
+	                <div className="flex items-center gap-2">
+	                  {isJudgeResult(feedbackResult) && (
+	                    <span className="rounded-full bg-slate-100 px-3 py-1 font-mono text-[11px] text-slate-700">
+	                      {feedbackResult.executionTimeMs?.toFixed(0)} ms
                     </span>
                   )}
                   {feedback ? (
@@ -1721,10 +1877,10 @@ export default function ActivityPage() {
                     )}
                   </>
                 )}
-              </div>
-            </div>
-          </section>
-        </main>
+	              </div>
+	            </div>
+	          </section>
+	        </main>
 
         {addFileOpen ? (
           <div
