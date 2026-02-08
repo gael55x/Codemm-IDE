@@ -359,6 +359,10 @@ export default function ActivityPage() {
   const [showTests, setShowTests] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [addFileOpen, setAddFileOpen] = useState(false);
+  const [addFileName, setAddFileName] = useState("");
+  const [addFileError, setAddFileError] = useState<string | null>(null);
+  const addFileInputRef = useRef<HTMLInputElement | null>(null);
   const editorRef = useRef<any>(null);
   const monacoRef = useRef<any>(null);
   const todoDecorationsRef = useRef<string[]>([]);
@@ -395,6 +399,21 @@ export default function ActivityPage() {
   useEffect(() => {
     entrypointClassRef.current = entrypointClass;
   }, [entrypointClass]);
+
+  useEffect(() => {
+    if (!addFileOpen) return;
+    // Avoid Next dev overlay runtime errors (prompt/confirm) by using a controlled modal.
+    // Focus after the modal is mounted.
+    const id = window.setTimeout(() => addFileInputRef.current?.focus(), 0);
+    return () => window.clearTimeout(id);
+  }, [addFileOpen]);
+
+  useEffect(() => {
+    // Close the modal on problem switch to avoid editing the wrong workspace.
+    setAddFileOpen(false);
+    setAddFileName("");
+    setAddFileError(null);
+  }, [selectedProblemId]);
 
   function updateTodoDecorations(nextCode: string) {
     const editor = editorRef.current;
@@ -914,16 +933,7 @@ export default function ActivityPage() {
     return `${m}:${s}`;
   }
 
-  function handleAddFile() {
-    const raw = window.prompt(
-      selectedLanguage === "python"
-        ? 'New file name (e.g., "utils.py")'
-        : selectedLanguage === "cpp"
-        ? 'New file name (e.g., "helper.hpp" or "helper.cpp")'
-        : 'New file name (e.g., "Helper.java")'
-    );
-    if (!raw) return;
-    const name = raw.trim();
+  function tryAddFile(name: string): { ok: true } | { ok: false; error: string } {
     const pattern =
       selectedLanguage === "python"
         ? PYTHON_FILENAME_PATTERN
@@ -931,6 +941,12 @@ export default function ActivityPage() {
         ? CPP_FILENAME_PATTERN
         : JAVA_FILENAME_PATTERN;
     if (!pattern.test(name)) {
+      const error =
+        selectedLanguage === "python"
+          ? 'Invalid filename. Use something like "utils.py" (letters/numbers/underscore, must end with .py).'
+          : selectedLanguage === "cpp"
+          ? 'Invalid filename. Use something like "helper.hpp" or "helper.cpp" (letters/numbers/underscore, must end with .hpp/.h/.cpp).'
+          : 'Invalid filename. Use something like "Helper.java" (letters/numbers/underscore, must end with .java).';
       if (selectedProblem) {
         setFeedback({
           problemId: selectedProblem.id,
@@ -938,21 +954,16 @@ export default function ActivityPage() {
           atIso: new Date().toISOString(),
           result: {
             stdout: "",
-            stderr:
-              selectedLanguage === "python"
-                ? 'Invalid filename. Use something like "utils.py" (letters/numbers/underscore, must end with .py).'
-                : selectedLanguage === "cpp"
-                ? 'Invalid filename. Use something like "helper.hpp" or "helper.cpp" (letters/numbers/underscore, must end with .hpp/.h/.cpp).'
-                : 'Invalid filename. Use something like "Helper.java" (letters/numbers/underscore, must end with .java).',
+            stderr: error,
           },
         });
       }
-      return;
+      return { ok: false, error };
     }
     if (Object.prototype.hasOwnProperty.call(files, name)) {
       activeFilenameRef.current = name;
       setActiveFilename(name);
-      return;
+      return { ok: true };
     }
     const className = name.replace(/\.[A-Za-z0-9_]+$/i, "");
     const skeleton =
@@ -975,6 +986,29 @@ export default function ActivityPage() {
     });
     activeFilenameRef.current = name;
     setActiveFilename(name);
+    return { ok: true };
+  }
+
+  function handleAddFile() {
+    setAddFileError(null);
+    setAddFileName("");
+    setAddFileOpen(true);
+  }
+
+  function handleConfirmAddFile() {
+    const name = addFileName.trim();
+    if (!name) {
+      setAddFileError("Enter a filename.");
+      return;
+    }
+    const res = tryAddFile(name);
+    if (res.ok) {
+      setAddFileOpen(false);
+      setAddFileName("");
+      setAddFileError(null);
+      return;
+    }
+    setAddFileError(res.error);
   }
 
   if (loading) {
@@ -1200,13 +1234,13 @@ export default function ActivityPage() {
                     {filename}
                   </button>
                 ))}
-                <button
-                  onClick={handleAddFile}
-                  disabled={!selectedProblem}
-                  className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  + File
-                </button>
+	                <button
+	                  onClick={handleAddFile}
+	                  disabled={!selectedProblem}
+	                  className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+	                >
+	                  + File
+	                </button>
               </div>
               <div className="flex gap-2">
                 <button
@@ -1691,6 +1725,116 @@ export default function ActivityPage() {
             </div>
           </section>
         </main>
+
+        {addFileOpen ? (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="codemm-add-file-title"
+            onMouseDown={(e) => {
+              if (e.target === e.currentTarget) {
+                setAddFileOpen(false);
+                setAddFileName("");
+                setAddFileError(null);
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                setAddFileOpen(false);
+                setAddFileName("");
+                setAddFileError(null);
+              }
+            }}
+          >
+            <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-4 shadow-xl">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div id="codemm-add-file-title" className="text-sm font-semibold text-slate-900">
+                    Add file
+                  </div>
+                  <div className="mt-1 text-xs text-slate-600">
+                    {selectedLanguage === "python"
+                      ? 'Example: "utils.py"'
+                      : selectedLanguage === "cpp"
+                      ? 'Example: "helper.hpp" or "helper.cpp"'
+                      : 'Example: "Helper.java"'}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                  onClick={() => {
+                    setAddFileOpen(false);
+                    setAddFileName("");
+                    setAddFileError(null);
+                  }}
+                >
+                  Close
+                </button>
+              </div>
+
+              <div className="mt-4">
+                <label className="text-xs font-semibold text-slate-700">Filename</label>
+                <input
+                  ref={addFileInputRef}
+                  className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                  value={addFileName}
+                  onChange={(e) => {
+                    setAddFileName(e.target.value);
+                    if (addFileError) setAddFileError(null);
+                  }}
+                  placeholder={
+                    selectedLanguage === "python"
+                      ? "utils.py"
+                      : selectedLanguage === "cpp"
+                      ? "helper.hpp"
+                      : "Helper.java"
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      handleConfirmAddFile();
+                    }
+                  }}
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                />
+                {addFileError ? (
+                  <div className="mt-2 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                    {addFileError}
+                  </div>
+                ) : (
+                  <div className="mt-2 text-[11px] text-slate-500">
+                    Filenames use letters, numbers, and underscore only.
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-5 flex justify-end gap-2">
+                <button
+                  type="button"
+                  className="rounded-full border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                  onClick={() => {
+                    setAddFileOpen(false);
+                    setAddFileName("");
+                    setAddFileError(null);
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="rounded-full bg-blue-500 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-blue-600"
+                  onClick={handleConfirmAddFile}
+                >
+                  Create file
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );
