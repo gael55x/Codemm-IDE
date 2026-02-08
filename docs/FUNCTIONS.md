@@ -10,6 +10,7 @@ This document describes what the desktop wrapper does (and does not do).
 - Builds judge Docker images if missing (from `apps/backend/Dockerfile.*-judge`).
 - Starts the local engine (`apps/backend`) as a child process via Node IPC (`spawn` with `ELECTRON_RUN_AS_NODE=1` → `apps/backend/ipc-server.js`).
 - Verifies engine connectivity via an IPC ping (no HTTP ports/health checks).
+- Configures the engine LLM provider in-memory via IPC (keys are not passed via environment variables).
 - Starts `apps/frontend` as a child process:
   - dev: `next dev` via npm workspaces
   - standalone: `apps/frontend/.next/standalone/server.js`

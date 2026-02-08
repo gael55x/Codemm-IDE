@@ -44,8 +44,19 @@ There is no internal HTTP API for engine calls. UI → engine is IPC only.
 - Secrets:
   - stored locally via Electron `safeStorage` (encrypted at rest)
   - never returned to renderer JS
+  - engine is configured in-memory on boot via IPC (API keys are not passed via environment variables)
 - Renderer loading:
   - UI is served from localhost (transitional) and verified via `GET /__codemm/health` + an ephemeral boot token before the Electron window loads it (mitigates localhost port hijacking).
+
+## No API Key? Use Ollama (Local Model)
+
+If you can’t use a paid API key, Codemm can use a local model via Ollama:
+
+1) Install Ollama and start it (it runs on `http://127.0.0.1:11434`).
+2) Pull a model (examples: `qwen2.5-coder:7b` for lighter machines, `qwen2.5-coder:14b` for higher quality if you have RAM).
+3) In Codemm → **API Key** settings:
+   - Provider: `Ollama (local)`
+   - Model: your pulled model name (e.g. `qwen2.5-coder:7b`)
 
 ## Development
 

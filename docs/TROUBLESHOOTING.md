@@ -131,6 +131,18 @@ Fix (dev):
 - If you want the engine to run under your system Node instead of Electron’s Node (avoids ABI mismatch):
   - `CODEMM_NODE_BIN=node npm run dev`
 
+## Ollama Not Running / Model Not Found
+
+Symptom:
+
+- Generation fails with an Ollama error (connection refused / model not configured / model not found).
+
+Fix:
+
+- Install and start Ollama (local server).
+- Pull a model in your terminal (example): `ollama pull qwen2.5-coder:7b`
+- In the IDE: **API Key** → Provider `Ollama (local)` → set Model to the pulled name.
+
 ## Electron/Chromium Cache Error: “Failed to write the temporary index file”
 
 Symptom:
