@@ -52,7 +52,7 @@ Target (final):
 
 - “Sessions” are not server resources. They are **local threads** scoped to a workspace.
 - Transitional compatibility:
-  - the engine still uses a legacy table name (`sessions`) for storage
+  - legacy workspaces are migrated in-place from `sessions*` tables to `threads*` on engine startup
 
 ## API Key Handling & Scoping
 
