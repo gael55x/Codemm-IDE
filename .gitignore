@@ -6,6 +6,12 @@
 **/.next/
 **/out/
 
+# Local env / secrets (never commit real keys)
+**/.env
+**/.env.*
+!.env.example
+!**/.env.example
+
 # Logs
 *.log
 
