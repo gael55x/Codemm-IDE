@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { GeneratedProblemDraft } from "../contracts/problem";
 import type { ProblemSlot } from "../planner/types";
-import { createCodemmCompletion, hasAnyLlmApiKey } from "../infra/llm";
+import { createCodemmCompletion, hasAnyLlmConfigured } from "../infra/llm";
 import { tryParseJson } from "../utils/jsonParser";
 import { trace, traceText } from "../utils/trace";
 
@@ -108,7 +108,7 @@ export async function generateDynamicGuidedHintLines(args: {
   if (process.env.NODE_ENV === "test" && !injectedCompletion) return [];
 
   // If we don't have credentials, skip (best-effort feature).
-  if (!hasAnyLlmApiKey() && !injectedCompletion) return [];
+  if (!hasAnyLlmConfigured() && !injectedCompletion) return [];
 
   const { system, user } = buildHintsPrompt({
     draft: args.draft,

@@ -69,6 +69,13 @@ Target (final):
 - Engine receives the key via environment variables on launch (transitional).
   - Changing the key currently requires restarting the IDE (transitional).
 
+### Local-Only LLM Option (No API Key): Ollama
+
+Codemm can run without a paid API key by using a local model via Ollama:
+
+- Set provider to `ollama` and configure a local model name (stored locally; not secret).
+- The engine calls Ollama over localhost (default `http://127.0.0.1:11434`).
+
 ## Deleted SaaS Concepts (By Design)
 
 - Auth routes (`/auth/*`), JWTs, users table, passwords.

@@ -136,26 +136,35 @@ function loadSecrets({ userDataDir }) {
 
   const provider = typeof llm.provider === "string" ? llm.provider : null;
   const apiKeyEncB64 = typeof llm.apiKeyEncB64 === "string" ? llm.apiKeyEncB64 : null;
+  const model = typeof llm.model === "string" ? llm.model : null;
   const updatedAt = typeof llm.updatedAt === "string" ? llm.updatedAt : null;
-  if (!provider || !apiKeyEncB64) return { secretsPath, llm: null };
+  if (!provider) return { secretsPath, llm: null };
 
   try {
+    if (!apiKeyEncB64) {
+      return { secretsPath, llm: { provider, apiKey: null, model, updatedAt } };
+    }
     const buf = Buffer.from(apiKeyEncB64, "base64");
     const apiKey = safeStorage.decryptString(buf);
-    return { secretsPath, llm: { provider, apiKey, updatedAt } };
+    return { secretsPath, llm: { provider, apiKey, model, updatedAt } };
   } catch {
     return { secretsPath, llm: null };
   }
 }
 
-function saveSecrets({ userDataDir, provider, apiKey }) {
+function saveSecrets({ userDataDir, provider, apiKey, model }) {
   const secretsPath = resolveSecretsStorePath({ userDataDir });
-  if (!safeStorage.isEncryptionAvailable()) {
-    throw new Error("Electron safeStorage encryption is not available on this system.");
-  }
-  const apiKeyEncB64 = safeStorage.encryptString(apiKey).toString("base64");
+  const nextModel = typeof model === "string" && model.trim() ? model.trim() : null;
+  const nextApiKey = typeof apiKey === "string" && apiKey.trim() ? apiKey.trim() : null;
+  const apiKeyEncB64 = (() => {
+    if (!nextApiKey) return null;
+    if (!safeStorage.isEncryptionAvailable()) {
+      throw new Error("Electron safeStorage encryption is not available on this system.");
+    }
+    return safeStorage.encryptString(nextApiKey).toString("base64");
+  })();
   const updatedAt = new Date().toISOString();
-  writeJsonFile(secretsPath, { v: 1, llm: { provider, apiKeyEncB64, updatedAt } });
+  writeJsonFile(secretsPath, { v: 1, llm: { provider, apiKeyEncB64, model: nextModel, updatedAt } });
   return { secretsPath, updatedAt };
 }
 
@@ -679,9 +688,11 @@ async function createWindowAndBoot() {
 
     ipcMain.handle("codemm:secrets:getLlmSettings", () => {
       const { llm } = loadSecrets({ userDataDir: storage.userDataDir });
+      const isOllama = llm && String(llm.provider || "").toLowerCase() === "ollama";
       return {
-        configured: Boolean(llm && llm.apiKey),
+        configured: Boolean(llm && (llm.apiKey || (isOllama && llm.model))),
         provider: llm ? llm.provider : null,
+        model: llm ? llm.model ?? null : null,
         updatedAt: llm ? llm.updatedAt ?? null : null,
       };
     });
@@ -689,20 +700,29 @@ async function createWindowAndBoot() {
     ipcMain.handle("codemm:secrets:setLlmSettings", async (_evt, args) => {
       const parsed = validate(
         z.object({
-          provider: z.enum(["openai", "anthropic", "gemini"]),
-          apiKey: z.string().min(10).max(500),
+          provider: z.enum(["openai", "anthropic", "gemini", "ollama"]),
+          apiKey: z.string().min(10).max(500).optional(),
+          model: z.string().min(1).max(128).optional(),
         }),
         args
       );
       const provider = parsed.provider.trim().toLowerCase();
-      const apiKey = parsed.apiKey.trim();
-      if (!(provider === "openai" || provider === "anthropic" || provider === "gemini")) {
+      const apiKey = typeof parsed.apiKey === "string" ? parsed.apiKey.trim() : "";
+      const model = typeof parsed.model === "string" ? parsed.model.trim() : "";
+      if (!(provider === "openai" || provider === "anthropic" || provider === "gemini" || provider === "ollama")) {
         throw new Error("Invalid provider.");
       }
-      if (!apiKey || apiKey.length < 10) {
-        throw new Error("API key is required.");
+      if (provider === "ollama") {
+        if (!model) throw new Error("Model is required for Ollama.");
+      } else {
+        if (!apiKey || apiKey.length < 10) throw new Error("API key is required.");
       }
-      const { updatedAt } = saveSecrets({ userDataDir: storage.userDataDir, provider, apiKey });
+
+      const { updatedAt } = saveSecrets({
+        userDataDir: storage.userDataDir,
+        provider,
+        ...(provider === "ollama" ? { apiKey: null, model } : { apiKey, model: null }),
+      });
       dialog.showMessageBox({
         type: "info",
         message: "API key saved",
@@ -918,6 +938,13 @@ async function createWindowAndBoot() {
     mainWindow = null;
   });
 
+  // Deny all permission requests by default (camera/mic/notifications/etc).
+  try {
+    win.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
+  } catch {
+    // ignore
+  }
+
   // Hard block popups; if the UI needs external links, we can explicitly open them with `shell.openExternal`.
   win.webContents.setWindowOpenHandler(({ url }) => {
     // If this is an external URL, open it in the user's browser.
@@ -926,6 +953,27 @@ async function createWindowAndBoot() {
     }
     return { action: "deny" };
   });
+
+  // Prevent navigations away from the expected local frontend origin.
+  // The allowed origin is set once the frontend port is chosen.
+  let allowedFrontendOrigin = null;
+  const maybeBlockNavigation = (e, url) => {
+    try {
+      if (typeof url !== "string" || !url) return;
+      if (url.startsWith("data:text/html")) return;
+      if (!allowedFrontendOrigin) return;
+      const u = new URL(url);
+      if (u.origin === allowedFrontendOrigin) return;
+      e.preventDefault();
+      if (/^https?:\/\//.test(url)) {
+        shell.openExternal(url).catch(() => {});
+      }
+    } catch {
+      e.preventDefault();
+    }
+  };
+  win.webContents.on("will-navigate", maybeBlockNavigation);
+  win.webContents.on("will-redirect", maybeBlockNavigation);
 
   win.loadURL(
     `data:text/html;charset=utf-8,${encodeURIComponent(`
@@ -1001,14 +1049,19 @@ async function createWindowAndBoot() {
 
   // Load locally stored LLM key (if configured) and inject it into the local engine process.
   const secrets = loadSecrets({ userDataDir: storage.userDataDir }).llm;
-  if (secrets && secrets.apiKey) {
-    if (secrets.provider === "openai") {
+  if (secrets && secrets.provider) {
+    if (secrets.provider === "ollama") {
+      baseEnv.CODEX_PROVIDER = "ollama";
+      if (typeof secrets.model === "string" && secrets.model.trim()) {
+        baseEnv.CODEMM_OLLAMA_MODEL = secrets.model.trim();
+      }
+    } else if (secrets.apiKey && secrets.provider === "openai") {
       baseEnv.CODEX_PROVIDER = "openai";
       baseEnv.CODEX_API_KEY = secrets.apiKey;
-    } else if (secrets.provider === "anthropic") {
+    } else if (secrets.apiKey && secrets.provider === "anthropic") {
       baseEnv.CODEX_PROVIDER = "anthropic";
       baseEnv.ANTHROPIC_API_KEY = secrets.apiKey;
-    } else if (secrets.provider === "gemini") {
+    } else if (secrets.apiKey && secrets.provider === "gemini") {
       baseEnv.CODEX_PROVIDER = "gemini";
       baseEnv.GEMINI_API_KEY = secrets.apiKey;
     }
@@ -1104,6 +1157,7 @@ async function createWindowAndBoot() {
   const frontendPort = app.isPackaged ? await pickAvailablePort(DEFAULT_FRONTEND_PORT) : DEFAULT_FRONTEND_PORT;
   const frontendUrl = `http://127.0.0.1:${frontendPort}`;
   const frontendToken = crypto.randomUUID();
+  allowedFrontendOrigin = new URL(frontendUrl).origin;
 
   // Start frontend.
   const standaloneServer = path.join(frontendDir, ".next", "standalone", "server.js");
@@ -1149,6 +1203,7 @@ async function createWindowAndBoot() {
       env: {
         ...baseEnv,
         PORT: String(frontendPort),
+        HOSTNAME: "127.0.0.1",
         NEXT_TELEMETRY_DISABLED: "1",
         CODEMM_FRONTEND_TOKEN: frontendToken,
       },

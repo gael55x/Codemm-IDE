@@ -27,6 +27,11 @@
 - Current: Electron main stores keys locally using `safeStorage` and exposes only a minimal preload bridge.
 - Target: OS keychain integration (macOS Keychain) with per-workspace overrides.
 
+Local model option:
+
+- Ollama runs on localhost and requires no API key, but it is still a local network boundary.
+- Codemm only calls the Ollama endpoint from the engine process (renderer does not receive model credentials).
+
 ## Docker Boundary
 
 - All compilation/execution/judging remains in Docker.

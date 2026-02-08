@@ -37,6 +37,8 @@ This document describes what the desktop wrapper does (and does not do).
 - `CODEMM_WORKSPACE_DIR` optional workspace folder override (skips folder picker)
 - `CODEMM_DB_PATH` optional path to the backend SQLite DB file (defaults to `<workspaceDataDir>/codemm.db`)
 - `CODEMM_DB_DIR` optional directory for the backend DB (used only if `CODEMM_DB_PATH` is not set)
+- `CODEMM_OLLAMA_MODEL` optional model name when using `CODEX_PROVIDER=ollama` (local LLM via Ollama)
+- `CODEMM_OLLAMA_URL` optional base URL for Ollama (default `http://127.0.0.1:11434`)
 - `CODEMM_USER_DATA_DIR` overrides Electron `userData` dir
 - `CODEMM_CACHE_DIR` overrides Electron cache dir
 - `CODEMM_LOGS_DIR` overrides Electron logs dir

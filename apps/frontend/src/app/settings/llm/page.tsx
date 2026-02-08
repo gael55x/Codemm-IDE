@@ -3,11 +3,12 @@
 import { useEffect, useState } from "react";
 import { useThemeMode } from "@/lib/useThemeMode";
 
-type LlmProvider = "openai" | "anthropic" | "gemini";
+type LlmProvider = "openai" | "anthropic" | "gemini" | "ollama";
 
 type LlmSettingsResponse = {
   configured: boolean;
   provider: string | null;
+  model?: string | null;
   updatedAt: string | null;
 };
 
@@ -21,6 +22,7 @@ export default function LlmSettingsPage() {
 
   const [provider, setProvider] = useState<LlmProvider>("openai");
   const [apiKey, setApiKey] = useState("");
+  const [model, setModel] = useState("");
 
   useEffect(() => {
     async function load() {
@@ -40,9 +42,11 @@ export default function LlmSettingsPage() {
         setStatus(data);
 
         const p = String(data.provider || "").toLowerCase();
-        if (p === "openai" || p === "anthropic" || p === "gemini") {
+        if (p === "openai" || p === "anthropic" || p === "gemini" || p === "ollama") {
           setProvider(p);
         }
+        const m = typeof (data as any).model === "string" ? String((data as any).model) : "";
+        setModel(m);
       } catch (e: any) {
         setError(e?.message || "Failed to load LLM settings");
       } finally {
@@ -62,7 +66,11 @@ export default function LlmSettingsPage() {
     setError(null);
     setSaving(true);
     try {
-      await api.setLlmSettings({ provider, apiKey });
+      if (provider === "ollama") {
+        await api.setLlmSettings({ provider, model });
+      } else {
+        await api.setLlmSettings({ provider, apiKey });
+      }
       setApiKey("");
       const refreshed = (await api.getLlmSettings()) as LlmSettingsResponse;
       setStatus(refreshed);
@@ -99,7 +107,7 @@ export default function LlmSettingsPage() {
           <div>
             <h1 className="text-2xl font-semibold">LLM API Key</h1>
             <p className={`mt-2 text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
-              Store your own provider API key for generation. Keys are stored locally and are never shown back in the UI.
+              Use your own API key (cloud providers) or run a local model via Ollama. Keys are stored locally and are never shown back in the UI.
             </p>
           </div>
           <button
@@ -137,27 +145,48 @@ export default function LlmSettingsPage() {
                     <option value="openai">OpenAI / OpenAI-compatible</option>
                     <option value="anthropic">Anthropic</option>
                     <option value="gemini">Gemini</option>
+                    <option value="ollama">Ollama (local)</option>
                   </select>
                   <p className={`mt-2 text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
-                    This key is stored locally and used for generation.
+                    This is stored locally and used for generation.
                   </p>
                 </div>
 
                 <div>
-                  <label className={`block text-sm font-medium ${darkMode ? "text-slate-200" : "text-slate-700"}`}>API Key</label>
-                  <input
-                    className={`mt-2 w-full rounded-lg border px-3 py-2 text-sm ${
-                      darkMode ? "border-slate-700 bg-slate-900 text-slate-100" : "border-slate-300 bg-white text-slate-900"
-                    }`}
-                    type="password"
-                    placeholder={status?.configured ? "••••••••••••••••" : "paste your key here"}
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
-                    disabled={saving}
-                  />
-                  <p className={`mt-2 text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
-                    Leaving this blank won’t change anything. To update, paste a new key and Save.
-                  </p>
+                  {provider === "ollama" ? (
+                    <>
+                      <label className={`block text-sm font-medium ${darkMode ? "text-slate-200" : "text-slate-700"}`}>Model</label>
+                      <input
+                        className={`mt-2 w-full rounded-lg border px-3 py-2 text-sm ${
+                          darkMode ? "border-slate-700 bg-slate-900 text-slate-100" : "border-slate-300 bg-white text-slate-900"
+                        }`}
+                        placeholder='Example: "qwen2.5-coder:7b"'
+                        value={model}
+                        onChange={(e) => setModel(e.target.value)}
+                        disabled={saving}
+                      />
+                      <p className={`mt-2 text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+                        Requires Ollama running locally. You must pull the model using the Ollama CLI.
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <label className={`block text-sm font-medium ${darkMode ? "text-slate-200" : "text-slate-700"}`}>API Key</label>
+                      <input
+                        className={`mt-2 w-full rounded-lg border px-3 py-2 text-sm ${
+                          darkMode ? "border-slate-700 bg-slate-900 text-slate-100" : "border-slate-300 bg-white text-slate-900"
+                        }`}
+                        type="password"
+                        placeholder={status?.configured ? "••••••••••••••••" : "paste your key here"}
+                        value={apiKey}
+                        onChange={(e) => setApiKey(e.target.value)}
+                        disabled={saving}
+                      />
+                      <p className={`mt-2 text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+                        Leaving this blank won’t change anything. To update, paste a new key and Save.
+                      </p>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -167,9 +196,9 @@ export default function LlmSettingsPage() {
                     darkMode ? "bg-emerald-600 hover:bg-emerald-500 text-white" : "bg-emerald-600 hover:bg-emerald-500 text-white"
                   } ${saving ? "opacity-60" : ""}`}
                   onClick={save}
-                  disabled={saving || !apiKey.trim()}
+                  disabled={saving || (provider === "ollama" ? !model.trim() : !apiKey.trim())}
                 >
-                  {saving ? "Saving…" : "Save key"}
+                  {saving ? "Saving…" : provider === "ollama" ? "Save model" : "Save key"}
                 </button>
                 <button
                   className={`rounded-lg px-4 py-2 text-sm font-semibold ${
@@ -178,7 +207,7 @@ export default function LlmSettingsPage() {
                   onClick={clearKey}
                   disabled={saving || !status?.configured}
                 >
-                  Remove key
+                  Clear
                 </button>
                 <div className={`ml-auto text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
                   {status?.configured ? `Configured (${status.provider})` : "Not configured"}
