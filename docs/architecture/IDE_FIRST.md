@@ -53,6 +53,10 @@ Target (final):
 - “Sessions” are not server resources. They are **local threads** scoped to a workspace.
 - Transitional compatibility:
   - legacy workspaces are migrated in-place from `sessions*` tables to `threads*` on engine startup
+- Threads can optionally store **custom instructions** (`instructions_md`) that shape generation:
+  - used as a best-effort prompt hint during generation
+  - persisted in `codemm.db` per workspace
+  - should not contain secrets (the UI warns not to paste API keys)
 
 ## API Key Handling & Scoping
 
