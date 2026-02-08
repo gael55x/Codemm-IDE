@@ -98,6 +98,40 @@ Fix:
   - Fallback workspace data dir: Electron `userData/Workspaces/<hash>/`.
   - If you override `CODEMM_DB_PATH`, prefer an absolute path (or `~`).
 
+## Backend SQLite Error: `SqliteError: near \")\": syntax error`
+
+Symptom:
+
+- Backend logs show a schema init error like `SqliteError: near ")": syntax error`.
+
+Fix:
+
+- Ensure you are on the latest repo commit (this was caused by a schema typo during migration work).
+- If the DB file was created during a failed init, delete the workspace DB and relaunch:
+  - Default workspace DB path: `<workspace>/.codemm/codemm.db`
+
+## Native Module ABI Mismatch (better-sqlite3)
+
+Symptom:
+
+- Backend logs show an Electron/native module error like:
+  - `better_sqlite3.node was compiled against a different Node.js version` or `NODE_MODULE_VERSION ...`
+
+Why it happens:
+
+- `better-sqlite3` is a native module and must be built against Electron’s Node ABI for packaged runs.
+
+Fix (packaging / dist):
+
+- From repo root:
+  - `npm run rebuild:electron`
+  - `npm run dist:mac`
+
+Fix (dev):
+
+- If you want the engine to run under your system Node instead of Electron’s Node (avoids ABI mismatch):
+  - `CODEMM_NODE_BIN=node npm run dev`
+
 ## Electron/Chromium Cache Error: “Failed to write the temporary index file”
 
 Symptom:
