@@ -1,11 +1,24 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 const generationListeners = new Map(); // subId -> handler
+const ollamaPullListeners = new Map(); // subId -> handler
 
 ipcRenderer.on("codemm:threads:generationEvent", (_evt, payload) => {
   const subId = payload && typeof payload.subId === "string" ? payload.subId : null;
   if (!subId) return;
   const handler = generationListeners.get(subId);
+  if (!handler) return;
+  try {
+    handler(payload.event);
+  } catch {
+    // ignore
+  }
+});
+
+ipcRenderer.on("codemm:ollama:pullEvent", (_evt, payload) => {
+  const subId = payload && typeof payload.subId === "string" ? payload.subId : null;
+  if (!subId) return;
+  const handler = ollamaPullListeners.get(subId);
   if (!handler) return;
   try {
     handler(payload.event);
@@ -71,5 +84,42 @@ contextBridge.exposeInMainWorld("codemm", {
   judge: {
     run: (args) => ipcRenderer.invoke("codemm:judge:run", args),
     submit: (args) => ipcRenderer.invoke("codemm:judge:submit", args),
+  },
+  ollama: {
+    getStatus: (args) => ipcRenderer.invoke("codemm:ollama:getStatus", args),
+    openInstall: () => ipcRenderer.invoke("codemm:ollama:openInstall"),
+    ensure: async ({ model, baseURL, onEvent }) => {
+      if (typeof model !== "string" || !model.trim()) throw new Error("model is required.");
+      const res = await ipcRenderer.invoke("codemm:ollama:ensure", { model, ...(typeof baseURL === "string" && baseURL.trim() ? { baseURL } : {}) });
+      const subId = res && typeof res.subId === "string" ? res.subId : null;
+      if (subId && typeof onEvent === "function") {
+        ollamaPullListeners.set(subId, onEvent);
+        const buffered = res && Array.isArray(res.buffered) ? res.buffered : [];
+        for (const ev of buffered) {
+          try {
+            onEvent(ev);
+          } catch {
+            // ignore
+          }
+        }
+      }
+
+      return {
+        ...res,
+        ...(subId
+          ? {
+              subId,
+              unsubscribe: async () => {
+                ollamaPullListeners.delete(subId);
+                try {
+                  await ipcRenderer.invoke("codemm:ollama:unsubscribePull", { subId });
+                } catch {
+                  // ignore
+                }
+              },
+            }
+          : {}),
+      };
+    },
   },
 });

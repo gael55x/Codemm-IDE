@@ -10,6 +10,7 @@ const path = require("path");
 const { z } = require("zod");
 
 const DEFAULT_FRONTEND_PORT = Number.parseInt(process.env.CODEMM_FRONTEND_PORT || "3000", 10);
+const OLLAMA_DEFAULT_URL = "http://127.0.0.1:11434";
 
 // Keep a global reference so the window isn't garbage-collected on macOS.
 /** @type {import("electron").BrowserWindow | null} */
@@ -274,6 +275,30 @@ function commandExists(cmd, args = ["--version"]) {
   return res.status === 0;
 }
 
+function httpGetJson(url, { timeoutMs = 2000 } = {}) {
+  return new Promise((resolve, reject) => {
+    const req = http.get(url, (res) => {
+      const chunks = [];
+      res.on("data", (c) => chunks.push(c));
+      res.on("end", () => {
+        const code = res.statusCode ?? 0;
+        if (code < 200 || code >= 300) return reject(new Error(`HTTP ${code}`));
+        try {
+          const raw = Buffer.concat(chunks).toString("utf8");
+          resolve(JSON.parse(raw));
+        } catch (e) {
+          reject(e);
+        }
+      });
+      res.on("error", reject);
+    });
+    req.on("error", reject);
+    req.setTimeout(timeoutMs, () => {
+      req.destroy(new Error("timeout"));
+    });
+  });
+}
+
 function findDockerBinary() {
   if (process.env.DOCKER_PATH && existsExecutable(process.env.DOCKER_PATH)) {
     return process.env.DOCKER_PATH;
@@ -307,6 +332,100 @@ function findDockerBinary() {
   }
 
   return null;
+}
+
+function findOllamaBinary() {
+  if (process.env.OLLAMA_PATH && existsExecutable(process.env.OLLAMA_PATH)) {
+    return process.env.OLLAMA_PATH;
+  }
+
+  /** @type {string[]} */
+  const candidates = [];
+
+  if (commandExists("ollama", ["--version"])) candidates.push("ollama");
+
+  if (process.platform === "darwin") {
+    candidates.push("/usr/local/bin/ollama", "/opt/homebrew/bin/ollama");
+  } else if (process.platform === "win32") {
+    const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local");
+    candidates.push(
+      path.join(localAppData, "Programs", "Ollama", "ollama.exe"),
+      "C:\\\\Program Files\\\\Ollama\\\\ollama.exe"
+    );
+  } else {
+    candidates.push("/usr/bin/ollama", "/usr/local/bin/ollama");
+  }
+
+  for (const c of candidates) {
+    if (c === "ollama") return "ollama";
+    if (existsExecutable(c)) return c;
+  }
+
+  return null;
+}
+
+async function getOllamaStatus({ baseURL = OLLAMA_DEFAULT_URL, model = null } = {}) {
+  const base = String(baseURL || OLLAMA_DEFAULT_URL).replace(/\/+$/, "");
+  const ollamaBin = findOllamaBinary();
+  const installed = Boolean(ollamaBin);
+
+  let running = false;
+  let version = null;
+  let models = null;
+  let modelPresent = null;
+  let lastError = null;
+
+  try {
+    const v = await httpGetJson(`${base}/api/version`, { timeoutMs: 1500 });
+    running = true;
+    version = v && typeof v.version === "string" ? v.version : null;
+  } catch (e) {
+    lastError = e?.message ? String(e.message) : "not running";
+  }
+
+  if (running) {
+    try {
+      const tags = await httpGetJson(`${base}/api/tags`, { timeoutMs: 3000 });
+      const arr = Array.isArray(tags?.models) ? tags.models : [];
+      const names = arr
+        .map((m) => (m && typeof m.name === "string" ? m.name : null))
+        .filter((x) => typeof x === "string");
+      models = names;
+      if (typeof model === "string" && model.trim()) {
+        modelPresent = names.includes(model.trim());
+      }
+    } catch (e) {
+      lastError = e?.message ? String(e.message) : "failed to list models";
+    }
+  }
+
+  return {
+    baseURL: base,
+    installed,
+    running,
+    version,
+    models,
+    modelPresent,
+    error: lastError,
+    ollamaBin,
+  };
+}
+
+async function startOllamaServe(ollamaBin, { baseURL = OLLAMA_DEFAULT_URL } = {}) {
+  const base = String(baseURL || OLLAMA_DEFAULT_URL).replace(/\/+$/, "");
+  const proc = spawn(ollamaBin, ["serve"], { detached: true, stdio: "ignore", windowsHide: true });
+  proc.unref();
+
+  const deadline = Date.now() + 12_000;
+  while (Date.now() < deadline) {
+    try {
+      await httpGetJson(`${base}/api/version`, { timeoutMs: 1200 });
+      return { ok: true };
+    } catch {
+      await sleep(500);
+    }
+  }
+  return { ok: false, reason: "Timed out waiting for Ollama to start." };
 }
 
 function checkDockerRunning({ dockerBin, timeoutMs = 8000 }) {
@@ -414,6 +533,7 @@ function spawnSystemNode(scriptPath, args, { cwd, env, stdio }) {
     env,
     detached: true,
     stdio,
+    windowsHide: true,
   });
 }
 
@@ -423,6 +543,7 @@ function spawnNodeWithElectron(scriptPath, args, { cwd, env, stdio }) {
     env: { ...env, ELECTRON_RUN_AS_NODE: "1" },
     detached: true,
     stdio,
+    windowsHide: true,
   });
 }
 
@@ -717,7 +838,7 @@ async function createWindowAndBoot() {
       dialog.showMessageBox({
         type: "info",
         message: "Workspace changed",
-        detail: "Restart Codemm-IDE to apply the new workspace.",
+        detail: "Restart Codemm-Desktop to apply the new workspace.",
       }).catch(() => {});
       return { ok: true, workspaceDir: nextWorkspaceDir, workspaceDataDir: nextWorkspaceDataDir };
     });
@@ -759,21 +880,170 @@ async function createWindowAndBoot() {
         provider,
         ...(provider === "ollama" ? { apiKey: null, model } : { apiKey, model: null }),
       });
+      // Apply to running engine (best-effort); do not expose secrets to renderer JS.
+      try {
+        if (engine) {
+          await requireEngine().call("engine.configureLlm", {
+            provider,
+            apiKey: provider === "ollama" ? null : apiKey,
+            model: provider === "ollama" ? model : null,
+            baseURL: provider === "ollama" ? OLLAMA_DEFAULT_URL : null,
+          });
+        }
+      } catch (e) {
+        console.warn("[ide] Failed to apply LLM settings to running engine (restart may be required):", e?.message || e);
+      }
       dialog.showMessageBox({
         type: "info",
         message: "LLM settings saved",
-        detail: "Restart Codemm-IDE to apply changes to the local engine.",
+        detail: "Applied to the local engine. Existing runs keep their original provider configuration.",
       }).catch(() => {});
       return { ok: true, updatedAt };
     });
 
     ipcMain.handle("codemm:secrets:clearLlmSettings", async () => {
       clearSecrets({ userDataDir: storage.userDataDir });
+      try {
+        if (engine) {
+          await requireEngine().call("engine.configureLlm", { provider: null, apiKey: null, model: null, baseURL: null });
+        }
+      } catch (e) {
+        console.warn("[ide] Failed to clear running engine LLM config (restart may be required):", e?.message || e);
+      }
       dialog.showMessageBox({
         type: "info",
         message: "LLM settings cleared",
-        detail: "Restart Codemm-IDE to apply changes to the local engine.",
+        detail: "Applied to the local engine. Existing runs keep their original provider configuration.",
       }).catch(() => {});
+      return { ok: true };
+    });
+
+    // Ollama helpers (local-only).
+    const ollamaPullSubs = new Map(); // subId -> { buffered: any[], proc: import("child_process").ChildProcess|null }
+
+    const sendOllamaEvent = (subId, event) => {
+      const sub = ollamaPullSubs.get(subId);
+      if (!sub) return;
+      sub.buffered.push(event);
+      if (sub.buffered.length > 200) sub.buffered.shift();
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("codemm:ollama:pullEvent", { subId, event });
+      }
+    };
+
+    const ensureSafeModelName = (raw) => {
+      const s = typeof raw === "string" ? raw.trim() : "";
+      if (!s) return null;
+      if (s.length > 128) throw new Error("Model name is too long.");
+      if (/\s/.test(s)) throw new Error("Model name must not contain whitespace.");
+      return s;
+    };
+
+    async function startOllamaPull({ model, baseURL, subId }) {
+      const ollamaBin = findOllamaBinary();
+      if (!ollamaBin) throw new Error("Ollama is not installed.");
+      sendOllamaEvent(subId, { type: "status", message: `Pulling model \"${model}\"…` });
+      const proc = spawn(ollamaBin, ["pull", model], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+      const sub = ollamaPullSubs.get(subId);
+      if (sub) sub.proc = proc;
+
+      const forward = (stream, buf) => {
+        const text = String(buf ?? "");
+        if (!text) return;
+        sendOllamaEvent(subId, { type: "log", stream, text });
+      };
+      proc.stdout?.on("data", (b) => forward("stdout", b));
+      proc.stderr?.on("data", (b) => forward("stderr", b));
+      proc.on("close", async (code) => {
+        sendOllamaEvent(subId, { type: "done", code: typeof code === "number" ? code : null });
+        try {
+          const st = await getOllamaStatus({ baseURL, model });
+          sendOllamaEvent(subId, { type: "status", message: st.modelPresent ? "Model is ready." : "Pull finished." });
+        } catch {
+          // ignore
+        }
+      });
+    }
+
+    ipcMain.handle("codemm:ollama:getStatus", async (_evt, args) => {
+      const parsed = validate(
+        z
+          .object({
+            model: z.string().min(1).max(128).optional(),
+            baseURL: z.string().min(1).max(256).optional(),
+          })
+          .optional(),
+        args
+      );
+      const model = ensureSafeModelName(parsed?.model ?? null);
+      const baseURL = typeof parsed?.baseURL === "string" ? parsed.baseURL.trim() : OLLAMA_DEFAULT_URL;
+      const st = await getOllamaStatus({ baseURL, model });
+      return {
+        installed: st.installed,
+        running: st.running,
+        version: st.version,
+        baseURL: st.baseURL,
+        model,
+        modelPresent: st.modelPresent,
+        models: st.models,
+        error: st.error,
+      };
+    });
+
+    ipcMain.handle("codemm:ollama:openInstall", async () => {
+      await shell.openExternal("https://ollama.com/download");
+      return { ok: true };
+    });
+
+    ipcMain.handle("codemm:ollama:ensure", async (_evt, args) => {
+      const parsed = validate(
+        z.object({
+          model: z.string().min(1).max(128),
+          baseURL: z.string().min(1).max(256).optional(),
+        }),
+        args
+      );
+      const model = ensureSafeModelName(parsed.model);
+      const baseURL = typeof parsed.baseURL === "string" ? parsed.baseURL.trim() : OLLAMA_DEFAULT_URL;
+      if (!model) throw new Error("Model is required.");
+
+      const st0 = await getOllamaStatus({ baseURL, model });
+      if (!st0.installed) return { ok: false, reason: "OLLAMA_NOT_INSTALLED" };
+
+      if (!st0.running) {
+        const bin = findOllamaBinary();
+        if (!bin) return { ok: false, reason: "OLLAMA_NOT_INSTALLED" };
+        const started = await startOllamaServe(bin, { baseURL });
+        if (!started.ok) return { ok: false, reason: "OLLAMA_START_FAILED", detail: started.reason };
+      }
+
+      const st1 = await getOllamaStatus({ baseURL, model });
+      if (st1.modelPresent) {
+        return { ok: true, pulling: false, status: { ...st1, ollamaBin: undefined } };
+      }
+
+      const subId = crypto.randomUUID();
+      ollamaPullSubs.set(subId, { buffered: [], proc: null });
+      sendOllamaEvent(subId, { type: "status", message: "Starting model pull…" });
+      startOllamaPull({ model, baseURL, subId }).catch((e) => {
+        sendOllamaEvent(subId, { type: "error", message: e?.message || "Pull failed." });
+        sendOllamaEvent(subId, { type: "done", code: null });
+      });
+      return { ok: true, pulling: true, subId, buffered: ollamaPullSubs.get(subId)?.buffered ?? [] };
+    });
+
+    ipcMain.handle("codemm:ollama:unsubscribePull", async (_evt, args) => {
+      const parsed = validate(z.object({ subId: z.string().min(1).max(128) }), args);
+      const subId = reqString(parsed.subId, "subId");
+      const sub = ollamaPullSubs.get(subId);
+      if (sub && sub.proc) {
+        try {
+          killProcessTree(sub.proc);
+        } catch {
+          // ignore
+        }
+      }
+      ollamaPullSubs.delete(subId);
       return { ok: true };
     });
 
