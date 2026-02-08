@@ -2,8 +2,8 @@
 
 Codemm-IDE is an Electron wrapper around the in-repo apps:
 
-- `apps/backend` (Express + Docker judge)
-- `apps/frontend` (Next.js UI)
+- `apps/backend` (local engine: agent loop + SQLite + Docker judge; IPC-only)
+- `apps/frontend` (Next.js renderer UI)
 
 The goal is a single desktop app experience while keeping backend determinism and Docker-based judging intact.
 
@@ -28,9 +28,9 @@ Note: this is an npm workspaces monorepo. Use the repo root for installs; do not
 
 This will:
 
-- start backend from `apps/backend`
+- start the local engine from `apps/backend` (IPC; no internal HTTP server)
 - start frontend from `apps/frontend`
-- open `http://127.0.0.1:3000` inside Electron
+- open the local frontend URL inside Electron (served from localhost as a transitional layer)
 
 ## Making Changes
 
