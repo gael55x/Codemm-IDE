@@ -597,7 +597,9 @@ function spawnSystemNode(scriptPath, args, { cwd, env, stdio }) {
   return spawn(nodeBin, [scriptPath, ...(args || [])], {
     cwd,
     env,
-    detached: true,
+    // On Windows, `detached: true` + piped stdio can yield `spawn EINVAL` in some setups.
+    // We don't need process groups on Windows because we already kill with `taskkill /T`.
+    detached: process.platform !== "win32",
     stdio,
     windowsHide: true,
   });
@@ -607,7 +609,7 @@ function spawnNodeWithElectron(scriptPath, args, { cwd, env, stdio }) {
   return spawn(process.execPath, [scriptPath, ...(args || [])], {
     cwd,
     env: { ...env, ELECTRON_RUN_AS_NODE: "1" },
-    detached: true,
+    detached: process.platform !== "win32",
     stdio,
     windowsHide: true,
   });
