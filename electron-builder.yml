@@ -1,5 +1,6 @@
 appId: com.codemm.ide
 productName: Codemm-IDE
+npmRebuild: true
 
 directories:
   output: dist

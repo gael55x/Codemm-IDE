@@ -31,3 +31,6 @@ Replace “child process calling `npm run dev`” with production builds embedde
 - Backend: compiled `dist/` + bundled `node_modules` rebuilt for Electron.
 - Frontend: Next production output (Phase 3: `output: "standalone"` with `.next/standalone/server.js`).
 - IDE: embed frontend build and eliminate the Next dev server.
+
+Native modules:
+- Packaged Electron builds must rebuild native deps (notably `better-sqlite3`) against Electron’s ABI (`npm run rebuild:electron`).

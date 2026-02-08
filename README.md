@@ -64,6 +64,7 @@ From `Codemm-IDE/`:
 
 ```bash
 npm install
+npm run rebuild:electron
 npm run dist:mac
 ```
 
