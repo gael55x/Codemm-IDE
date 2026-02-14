@@ -11,6 +11,7 @@ import {
 import type { GenerationProgressEvent } from "./contracts/generationProgress";
 import { getGenerationProgressBuffer, subscribeGenerationProgress } from "./generation/progressBus";
 import { editDraftProblemWithAi } from "./services/activityProblemEditService";
+import { z } from "zod";
 
 type JsonObject = Record<string, unknown>;
 
@@ -90,392 +91,514 @@ function safeJsonStringify(x: unknown): string {
   }
 }
 
-async function handle(method: string, paramsRaw: unknown): Promise<unknown> {
-  if (method === "engine.ping") {
-    return { ok: true };
+class ValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ValidationError";
   }
+}
 
-  if (method === "engine.configureLlm") {
-    const params = requireParams(paramsRaw);
-    const provider = getString(params.provider);
-    const apiKey = getString(params.apiKey);
-    const model = getString(params.model);
-    const baseURL = getString(params.baseURL);
+type RpcHandler = (paramsRaw: unknown) => Promise<unknown>;
+type RpcHandlerDef = {
+  schema?: z.ZodTypeAny;
+  handler: RpcHandler;
+};
 
-    // Store in-memory only (do not persist).
-    const { setRuntimeLlmConfig } = await import("./infra/llm/runtimeConfig");
-    const normalizedProvider =
-      provider === "openai" || provider === "anthropic" || provider === "gemini" || provider === "ollama"
-        ? provider
-        : null;
-    setRuntimeLlmConfig({
-      provider: normalizedProvider,
-      apiKey: apiKey ?? null,
-      model: model ?? null,
-      baseURL: baseURL ?? null,
-    });
-
-    return { ok: true };
+function validateOrThrow(schema: z.ZodTypeAny, paramsRaw: unknown): unknown {
+  const res = schema.safeParse(paramsRaw);
+  if (!res.success) {
+    const msg = res.error.issues?.[0]?.message || "Invalid params.";
+    throw new ValidationError(msg);
   }
+  return res.data;
+}
 
-  if (method === "threads.create") {
-    const params = requireParams(paramsRaw);
-    const learning_mode = (params.learning_mode ?? null) as LearningMode | null;
-    const created = createSession(learning_mode ?? undefined);
-    const promptText = defaultAssistantPrompt();
-    threadMessageDb.create(crypto.randomUUID(), created.sessionId, "assistant", promptText);
-    return {
-      threadId: created.sessionId,
-      state: created.state,
-      learning_mode: created.learning_mode,
-      nextQuestion: promptText,
-      questionKey: null,
-      done: false,
-      next_action: "ask",
-    };
-  }
+const rpcHandlers: Record<string, RpcHandlerDef> = {
+  "engine.ping": {
+    handler: async () => ({ ok: true }),
+  },
 
-  if (method === "threads.list") {
-    const params = requireParams(paramsRaw);
-    const limit = getNumber(params.limit) ?? 20;
-    const threads = threadDb.listSummaries(limit);
-    return { threads };
-  }
+  "engine.configureLlm": {
+    schema: z
+      .object({
+        provider: z.string().min(1).max(32).nullable().optional(),
+        apiKey: z.string().min(1).max(2000).nullable().optional(),
+        model: z.string().min(1).max(256).nullable().optional(),
+        baseURL: z.string().min(1).max(512).nullable().optional(),
+      })
+      .passthrough(),
+    handler: async (paramsRaw) => {
+      const params = requireParams(paramsRaw);
+      const provider = getString(params.provider);
+      const apiKey = getString(params.apiKey);
+      const model = getString(params.model);
+      const baseURL = getString(params.baseURL);
 
-  if (method === "threads.get") {
-    const params = requireParams(paramsRaw);
-    const threadId = getString(params.threadId);
-    if (!threadId) throw new Error("threadId is required.");
-    const s = getSession(threadId);
-    return {
-      threadId: s.id,
-      state: s.state,
-      learning_mode: s.learning_mode,
-      instructions_md: s.instructions_md,
-      spec: s.spec,
-      messages: s.messages,
-      collector: s.collector,
-      confidence: s.confidence,
-      commitments: s.commitments,
-      generationOutcomes: s.generationOutcomes,
-      intentTrace: s.intentTrace,
-    };
-  }
+      // Store in-memory only (do not persist).
+      const { setRuntimeLlmConfig } = await import("./infra/llm/runtimeConfig");
+      const normalizedProvider =
+        provider === "openai" || provider === "anthropic" || provider === "gemini" || provider === "ollama"
+          ? provider
+          : null;
+      setRuntimeLlmConfig({
+        provider: normalizedProvider,
+        apiKey: apiKey ?? null,
+        model: model ?? null,
+        baseURL: baseURL ?? null,
+      });
 
-  if (method === "threads.setInstructions") {
-    const params = requireParams(paramsRaw);
-    const threadId = getString(params.threadId);
-    if (!threadId) throw new Error("threadId is required.");
-    const raw = params.instructions_md;
-    const instructionsMd = typeof raw === "string" ? raw : raw === null ? null : null;
-    if (typeof instructionsMd === "string" && instructionsMd.length > 8000) {
-      throw new Error("instructions_md is too large.");
-    }
-    return setSessionInstructions(threadId, instructionsMd);
-  }
+      return { ok: true };
+    },
+  },
 
-  if (method === "threads.postMessage") {
-    const params = requireParams(paramsRaw);
-    const threadId = getString(params.threadId);
-    const message = getString(params.message);
-    if (!threadId) throw new Error("threadId is required.");
-    if (!message) throw new Error("message is required.");
-    return processSessionMessage(threadId, message);
-  }
+  "threads.create": {
+    schema: z.object({ learning_mode: z.any().optional() }).passthrough(),
+    handler: async (paramsRaw) => {
+      const params = requireParams(paramsRaw);
+      const learning_mode = (params.learning_mode ?? null) as LearningMode | null;
+      const created = createSession(learning_mode ?? undefined);
+      const promptText = defaultAssistantPrompt();
+      threadMessageDb.create(crypto.randomUUID(), created.sessionId, "assistant", promptText);
+      return {
+        threadId: created.sessionId,
+        state: created.state,
+        learning_mode: created.learning_mode,
+        nextQuestion: promptText,
+        questionKey: null,
+        done: false,
+        next_action: "ask",
+      };
+    },
+  },
 
-  if (method === "threads.subscribeGeneration") {
-    const params = requireParams(paramsRaw);
-    const threadId = getString(params.threadId);
-    if (!threadId) throw new Error("threadId is required.");
+  "threads.list": {
+    schema: z.object({ limit: z.number().int().min(1).max(200).optional() }).passthrough(),
+    handler: async (paramsRaw) => {
+      const params = requireParams(paramsRaw);
+      const limit = getNumber(params.limit) ?? 20;
+      const threads = threadDb.listSummaries(limit);
+      return { threads };
+    },
+  },
 
-    // Ensure thread exists.
-    getSession(threadId);
+  "threads.get": {
+    schema: z.object({ threadId: z.string().min(1).max(128) }).passthrough(),
+    handler: async (paramsRaw) => {
+      const params = requireParams(paramsRaw);
+      const threadId = getString(params.threadId);
+      if (!threadId) throw new Error("threadId is required.");
+      const s = getSession(threadId);
+      return {
+        threadId: s.id,
+        state: s.state,
+        learning_mode: s.learning_mode,
+        instructions_md: s.instructions_md,
+        spec: s.spec,
+        messages: s.messages,
+        collector: s.collector,
+        confidence: s.confidence,
+        commitments: s.commitments,
+        generationOutcomes: s.generationOutcomes,
+        intentTrace: s.intentTrace,
+      };
+    },
+  },
 
-    const subId = makeSubId();
-    const latest = runDb.latestByThread(threadId, "generation");
-    const buffered = (() => {
-      if (latest && typeof latest.id === "string" && latest.id) {
-        const rows = runEventDb.listByRun(latest.id, 1500);
-        const events: GenerationProgressEvent[] = [];
-        for (const r of rows) {
-          if (r.type !== "progress") continue;
-          try {
-            const parsed = JSON.parse(r.payload_json) as GenerationProgressEvent;
-            if (parsed && typeof (parsed as any).type === "string") events.push(parsed);
-          } catch {
-            // ignore
+  "threads.setInstructions": {
+    schema: z
+      .object({
+        threadId: z.string().min(1).max(128),
+        instructions_md: z.string().max(8000).nullable(),
+      })
+      .passthrough(),
+    handler: async (paramsRaw) => {
+      const params = requireParams(paramsRaw);
+      const threadId = getString(params.threadId);
+      if (!threadId) throw new Error("threadId is required.");
+      const raw = params.instructions_md;
+      const instructionsMd = typeof raw === "string" ? raw : raw === null ? null : null;
+      if (typeof instructionsMd === "string" && instructionsMd.length > 8000) {
+        throw new Error("instructions_md is too large.");
+      }
+      return setSessionInstructions(threadId, instructionsMd);
+    },
+  },
+
+  "threads.postMessage": {
+    schema: z
+      .object({
+        threadId: z.string().min(1).max(128),
+        message: z.string().min(1).max(50_000),
+      })
+      .passthrough(),
+    handler: async (paramsRaw) => {
+      const params = requireParams(paramsRaw);
+      const threadId = getString(params.threadId);
+      const message = getString(params.message);
+      if (!threadId) throw new Error("threadId is required.");
+      if (!message) throw new Error("message is required.");
+      return processSessionMessage(threadId, message);
+    },
+  },
+
+  "threads.subscribeGeneration": {
+    schema: z.object({ threadId: z.string().min(1).max(128) }).passthrough(),
+    handler: async (paramsRaw) => {
+      const params = requireParams(paramsRaw);
+      const threadId = getString(params.threadId);
+      if (!threadId) throw new Error("threadId is required.");
+
+      // Ensure thread exists.
+      getSession(threadId);
+
+      const subId = makeSubId();
+      const latest = runDb.latestByThread(threadId, "generation");
+      const buffered = (() => {
+        if (latest && typeof latest.id === "string" && latest.id) {
+          const rows = runEventDb.listByRun(latest.id, 1500);
+          const events: GenerationProgressEvent[] = [];
+          for (const r of rows) {
+            if (r.type !== "progress") continue;
+            try {
+              const parsed = JSON.parse(r.payload_json) as GenerationProgressEvent;
+              if (parsed && typeof (parsed as any).type === "string") events.push(parsed);
+            } catch {
+              // ignore
+            }
           }
+          if (events.length > 0) return events;
         }
-        if (events.length > 0) return events;
+        return getGenerationProgressBuffer(threadId);
+      })();
+      const unsubscribe = subscribeGenerationProgress(threadId, (ev: GenerationProgressEvent) => {
+        send({ type: "event", topic: "threads.generation", payload: { subId, event: ev } });
+      });
+      generationSubs.set(subId, { threadId, unsubscribe });
+
+      return { subId, buffered, ...(latest && typeof latest.id === "string" ? { runId: latest.id } : {}) };
+    },
+  },
+
+  "threads.unsubscribeGeneration": {
+    schema: z.object({ subId: z.string().min(1).max(128) }).passthrough(),
+    handler: async (paramsRaw) => {
+      const params = requireParams(paramsRaw);
+      const subId = getString(params.subId);
+      if (!subId) throw new Error("subId is required.");
+      const sub = generationSubs.get(subId);
+      if (sub) {
+        try {
+          sub.unsubscribe();
+        } finally {
+          generationSubs.delete(subId);
+        }
       }
-      return getGenerationProgressBuffer(threadId);
-    })();
-    const unsubscribe = subscribeGenerationProgress(threadId, (ev: GenerationProgressEvent) => {
-      send({ type: "event", topic: "threads.generation", payload: { subId, event: ev } });
-    });
-    generationSubs.set(subId, { threadId, unsubscribe });
+      return { ok: true };
+    },
+  },
 
-    return { subId, buffered, ...(latest && typeof latest.id === "string" ? { runId: latest.id } : {}) };
-  }
+  "threads.generate": {
+    schema: z.object({ threadId: z.string().min(1).max(128) }).passthrough(),
+    handler: async (paramsRaw) => {
+      const params = requireParams(paramsRaw);
+      const threadId = getString(params.threadId);
+      if (!threadId) throw new Error("threadId is required.");
+      const runId = crypto.randomUUID();
+      runDb.create(runId, "generation", { threadId, metaJson: safeJsonStringify({ threadId }) });
 
-  if (method === "threads.unsubscribeGeneration") {
-    const params = requireParams(paramsRaw);
-    const subId = getString(params.subId);
-    if (!subId) throw new Error("subId is required.");
-    const sub = generationSubs.get(subId);
-    if (sub) {
-      try {
-        sub.unsubscribe();
-      } finally {
-        generationSubs.delete(subId);
-      }
-    }
-    return { ok: true };
-  }
-
-  if (method === "threads.generate") {
-    const params = requireParams(paramsRaw);
-    const threadId = getString(params.threadId);
-    if (!threadId) throw new Error("threadId is required.");
-    const runId = crypto.randomUUID();
-    runDb.create(runId, "generation", { threadId, metaJson: safeJsonStringify({ threadId }) });
-
-    let seq = 0;
-    const unsubPersist = subscribeGenerationProgress(threadId, (ev: GenerationProgressEvent) => {
-      seq += 1;
-      try {
-        runEventDb.append(runId, seq, "progress", safeJsonStringify(ev));
-      } catch {
-        // ignore persistence failures; stream must still work
-      }
-    });
-
-    try {
-      const { activityId, problems } = await generateFromSession(threadId);
-      runDb.finish(runId, "succeeded");
-      return { activityId, problemCount: problems.length, runId };
-    } catch (err) {
-      try {
+      let seq = 0;
+      const unsubPersist = subscribeGenerationProgress(threadId, (ev: GenerationProgressEvent) => {
         seq += 1;
-        runEventDb.append(
-          runId,
-          seq,
-          "error",
-          safeJsonStringify({ message: err instanceof Error ? err.message : String(err) })
-        );
-      } catch {
-        // ignore
-      }
-      runDb.finish(runId, "failed");
-      throw err;
-    } finally {
+        try {
+          runEventDb.append(runId, seq, "progress", safeJsonStringify(ev));
+        } catch {
+          // ignore persistence failures; stream must still work
+        }
+      });
+
       try {
-        unsubPersist();
+        const { activityId, problems } = await generateFromSession(threadId);
+        runDb.finish(runId, "succeeded");
+        return { activityId, problemCount: problems.length, runId };
+      } catch (err) {
+        try {
+          seq += 1;
+          runEventDb.append(
+            runId,
+            seq,
+            "error",
+            safeJsonStringify({ message: err instanceof Error ? err.message : String(err) })
+          );
+        } catch {
+          // ignore
+        }
+        runDb.finish(runId, "failed");
+        throw err;
+      } finally {
+        try {
+          unsubPersist();
+        } catch {
+          // ignore
+        }
+      }
+    },
+  },
+
+  "activities.get": {
+    schema: z.object({ id: z.string().min(1).max(128) }).passthrough(),
+    handler: async (paramsRaw) => {
+      const params = requireParams(paramsRaw);
+      const id = getString(params.id);
+      if (!id) throw new Error("id is required.");
+      const dbActivity = activityDb.findById(id);
+      if (!dbActivity) throw new Error("Activity not found.");
+      return {
+        activity: {
+          id: dbActivity.id,
+          title: dbActivity.title,
+          prompt: dbActivity.prompt || "",
+          problems: JSON.parse(dbActivity.problems),
+          status: (dbActivity.status as any) ?? "DRAFT",
+          timeLimitSeconds: typeof dbActivity.time_limit_seconds === "number" ? dbActivity.time_limit_seconds : null,
+          createdAt: dbActivity.created_at,
+        },
+      };
+    },
+  },
+
+  "activities.list": {
+    schema: z.object({ limit: z.number().int().min(1).max(200).optional() }).passthrough(),
+    handler: async (paramsRaw) => {
+      const params = requireParams(paramsRaw);
+      const limit = getNumber(params.limit) ?? 30;
+      const activities = activityDb.listSummaries(limit);
+      return { activities };
+    },
+  },
+
+  "activities.patch": {
+    schema: z
+      .object({
+        id: z.string().min(1).max(128),
+        title: z.string().max(200).optional(),
+        timeLimitSeconds: z.number().int().min(0).max(8 * 60 * 60).nullable().optional(),
+      })
+      .passthrough(),
+    handler: async (paramsRaw) => {
+      const params = requireParams(paramsRaw);
+      const id = getString(params.id);
+      if (!id) throw new Error("id is required.");
+      const dbActivity = activityDb.findById(id);
+      if (!dbActivity) throw new Error("Activity not found.");
+      if ((dbActivity.status ?? "DRAFT") !== "DRAFT") throw new Error("This activity has already been published.");
+
+      const title = typeof params.title === "string" ? params.title.trim() : undefined;
+      const timeLimitSeconds =
+        typeof params.timeLimitSeconds === "number" && Number.isFinite(params.timeLimitSeconds)
+          ? Math.max(0, Math.min(8 * 60 * 60, Math.trunc(params.timeLimitSeconds)))
+          : params.timeLimitSeconds === null
+            ? null
+            : undefined;
+
+      const updated = activityDb.update(id, {
+        ...(typeof title === "string" && title ? { title } : {}),
+        ...(typeof timeLimitSeconds !== "undefined" ? { time_limit_seconds: timeLimitSeconds } : {}),
+      });
+      if (!updated) throw new Error("Failed to update activity.");
+      return {
+        activity: {
+          id: updated.id,
+          title: updated.title,
+          prompt: updated.prompt || "",
+          problems: JSON.parse(updated.problems),
+          status: (updated.status as any) ?? "DRAFT",
+          timeLimitSeconds: typeof updated.time_limit_seconds === "number" ? updated.time_limit_seconds : null,
+          createdAt: updated.created_at,
+        },
+      };
+    },
+  },
+
+  "activities.publish": {
+    schema: z.object({ id: z.string().min(1).max(128) }).passthrough(),
+    handler: async (paramsRaw) => {
+      const params = requireParams(paramsRaw);
+      const id = getString(params.id);
+      if (!id) throw new Error("id is required.");
+      const dbActivity = activityDb.findById(id);
+      if (!dbActivity) throw new Error("Activity not found.");
+      if ((dbActivity.status ?? "DRAFT") === "PUBLISHED") return { ok: true };
+      activityDb.update(id, { status: "PUBLISHED" });
+      return { ok: true };
+    },
+  },
+
+  "activities.aiEdit": {
+    schema: z
+      .object({
+        id: z.string().min(1).max(128),
+        problemId: z.string().min(1).max(128),
+        instruction: z.string().min(1).max(8000),
+      })
+      .passthrough(),
+    handler: async (paramsRaw) => {
+      const params = requireParams(paramsRaw);
+      const id = getString(params.id);
+      const problemId = getString(params.problemId);
+      const instruction = getString(params.instruction);
+      if (!id) throw new Error("id is required.");
+      if (!problemId) throw new Error("problemId is required.");
+      if (!instruction) throw new Error("instruction is required.");
+
+      const dbActivity = activityDb.findById(id);
+      if (!dbActivity) throw new Error("Activity not found.");
+      if ((dbActivity.status ?? "DRAFT") !== "DRAFT") throw new Error("This activity has already been published.");
+
+      let problems: any[] = [];
+      try {
+        const parsedProblems = JSON.parse(dbActivity.problems);
+        problems = Array.isArray(parsedProblems) ? parsedProblems : [];
       } catch {
-        // ignore
+        throw new Error("Failed to load activity problems.");
       }
-    }
-  }
 
-  if (method === "activities.get") {
-    const params = requireParams(paramsRaw);
-    const id = getString(params.id);
-    if (!id) throw new Error("id is required.");
-    const dbActivity = activityDb.findById(id);
-    if (!dbActivity) throw new Error("Activity not found.");
-    return {
-      activity: {
-        id: dbActivity.id,
-        title: dbActivity.title,
-        prompt: dbActivity.prompt || "",
-        problems: JSON.parse(dbActivity.problems),
-        status: (dbActivity.status as any) ?? "DRAFT",
-        timeLimitSeconds: typeof dbActivity.time_limit_seconds === "number" ? dbActivity.time_limit_seconds : null,
-        createdAt: dbActivity.created_at,
-      },
-    };
-  }
+      const idx = problems.findIndex((p) => p && typeof p === "object" && (p as any).id === problemId);
+      if (idx < 0) throw new Error("Problem not found.");
 
-  if (method === "activities.list") {
-    const params = requireParams(paramsRaw);
-    const limit = getNumber(params.limit) ?? 30;
-    const activities = activityDb.listSummaries(limit);
-    return { activities };
-  }
+      const updatedProblem = await editDraftProblemWithAi({
+        existing: problems[idx],
+        instruction,
+      });
+      const nextProblems = [...problems];
+      nextProblems[idx] = updatedProblem;
 
-  if (method === "activities.patch") {
-    const params = requireParams(paramsRaw);
-    const id = getString(params.id);
-    if (!id) throw new Error("id is required.");
-    const dbActivity = activityDb.findById(id);
-    if (!dbActivity) throw new Error("Activity not found.");
-    if ((dbActivity.status ?? "DRAFT") !== "DRAFT") throw new Error("This activity has already been published.");
+      const updated = activityDb.update(id, { problems: JSON.stringify(nextProblems) });
+      if (!updated) throw new Error("Failed to update activity.");
 
-    const title = typeof params.title === "string" ? params.title.trim() : undefined;
-    const timeLimitSeconds =
-      typeof params.timeLimitSeconds === "number" && Number.isFinite(params.timeLimitSeconds)
-        ? Math.max(0, Math.min(8 * 60 * 60, Math.trunc(params.timeLimitSeconds)))
-        : params.timeLimitSeconds === null
-          ? null
-          : undefined;
+      return {
+        activity: {
+          id: updated.id,
+          title: updated.title,
+          prompt: updated.prompt || "",
+          problems: JSON.parse(updated.problems),
+          status: (updated.status as any) ?? "DRAFT",
+          timeLimitSeconds: typeof updated.time_limit_seconds === "number" ? updated.time_limit_seconds : null,
+          createdAt: updated.created_at,
+        },
+      };
+    },
+  },
 
-    const updated = activityDb.update(id, {
-      ...(typeof title === "string" && title ? { title } : {}),
-      ...(typeof timeLimitSeconds !== "undefined" ? { time_limit_seconds: timeLimitSeconds } : {}),
-    });
-    if (!updated) throw new Error("Failed to update activity.");
-    return {
-      activity: {
-        id: updated.id,
-        title: updated.title,
-        prompt: updated.prompt || "",
-        problems: JSON.parse(updated.problems),
-        status: (updated.status as any) ?? "DRAFT",
-        timeLimitSeconds: typeof updated.time_limit_seconds === "number" ? updated.time_limit_seconds : null,
-        createdAt: updated.created_at,
-      },
-    };
-  }
+  "judge.run": {
+    schema: z
+      .object({
+        language: ActivityLanguageSchema,
+        code: z.string().min(1).max(200_000).optional(),
+        files: z.record(z.string(), z.string()).optional(),
+        mainClass: z.string().min(1).max(256).optional(),
+        stdin: z.string().max(50_000).optional(),
+      })
+      .passthrough()
+      .refine((v) => Boolean(v.code) !== Boolean(v.files), { message: 'Provide either "code" or "files".' }),
+    handler: async (paramsRaw) => {
+      const params = requireParams(paramsRaw);
+      const { code, language, files, mainClass, stdin } = params;
 
-  if (method === "activities.publish") {
-    const params = requireParams(paramsRaw);
-    const id = getString(params.id);
-    if (!id) throw new Error("id is required.");
-    const dbActivity = activityDb.findById(id);
-    if (!dbActivity) throw new Error("Activity not found.");
-    if ((dbActivity.status ?? "DRAFT") === "PUBLISHED") return { ok: true };
-    activityDb.update(id, { status: "PUBLISHED" });
-    return { ok: true };
-  }
+      const langParsed = ActivityLanguageSchema.safeParse(language);
+      if (!langParsed.success) throw new Error("Invalid language.");
+      const lang = langParsed.data;
+      if (!isLanguageSupportedForExecution(lang)) throw new Error(`Language "${lang}" is not supported for /run yet.`);
+      const profile = getLanguageProfile(lang);
+      if (!profile.executionAdapter) throw new Error(`No execution adapter configured for "${lang}".`);
 
-  if (method === "activities.aiEdit") {
-    const params = requireParams(paramsRaw);
-    const id = getString(params.id);
-    const problemId = getString(params.problemId);
-    const instruction = getString(params.instruction);
-    if (!id) throw new Error("id is required.");
-    if (!problemId) throw new Error("problemId is required.");
-    if (!instruction) throw new Error("instruction is required.");
+      const maxTotalCodeLength = 200_000; // 200KB
+      const maxStdinLength = 50_000; // 50KB
+      const maxFileCount = lang === "python" ? 20 : lang === "cpp" ? 40 : 12;
+      const filenamePattern =
+        lang === "python"
+          ? /^[A-Za-z_][A-Za-z0-9_]*\.py$/
+          : lang === "cpp"
+            ? /^[A-Za-z_][A-Za-z0-9_]*\.(?:cpp|h|hpp)$/
+            : lang === "sql"
+              ? /^[A-Za-z_][A-Za-z0-9_]*\.sql$/
+              : /^[A-Za-z_][A-Za-z0-9_]*\.java$/;
 
-    const dbActivity = activityDb.findById(id);
-    if (!dbActivity) throw new Error("Activity not found.");
-    if ((dbActivity.status ?? "DRAFT") !== "DRAFT") throw new Error("This activity has already been published.");
+      let safeStdin: string | undefined = undefined;
+      if (typeof stdin !== "undefined") {
+        if (typeof stdin !== "string") throw new Error("stdin must be a string.");
+        if (stdin.length > maxStdinLength) throw new Error(`stdin exceeds maximum length of ${maxStdinLength} characters.`);
+        safeStdin = stdin;
+      }
 
-    let problems: any[] = [];
-    try {
-      const parsedProblems = JSON.parse(dbActivity.problems);
-      problems = Array.isArray(parsedProblems) ? parsedProblems : [];
-    } catch {
-      throw new Error("Failed to load activity problems.");
-    }
+      const runId = crypto.randomUUID();
+      runDb.create(runId, "judge.run", {
+        threadId: null,
+        metaJson: safeJsonStringify({
+          language: lang,
+          kind: files && typeof files === "object" ? "files" : "code",
+        }),
+      });
 
-    const idx = problems.findIndex((p) => p && typeof p === "object" && (p as any).id === problemId);
-    if (idx < 0) throw new Error("Problem not found.");
+      if (files && typeof files === "object") {
+        const entries = Object.entries(files as Record<string, unknown>);
+        if (entries.length === 0) throw new Error("files must be a non-empty object.");
+        if (entries.length > maxFileCount) throw new Error(`Too many files. Max is ${maxFileCount}.`);
 
-    const updatedProblem = await editDraftProblemWithAi({
-      existing: problems[idx],
-      instruction,
-    });
-    const nextProblems = [...problems];
-    nextProblems[idx] = updatedProblem;
-
-    const updated = activityDb.update(id, { problems: JSON.stringify(nextProblems) });
-    if (!updated) throw new Error("Failed to update activity.");
-
-    return {
-      activity: {
-        id: updated.id,
-        title: updated.title,
-        prompt: updated.prompt || "",
-        problems: JSON.parse(updated.problems),
-        status: (updated.status as any) ?? "DRAFT",
-        timeLimitSeconds: typeof updated.time_limit_seconds === "number" ? updated.time_limit_seconds : null,
-        createdAt: updated.created_at,
-      },
-    };
-  }
-
-  if (method === "judge.run") {
-    const params = requireParams(paramsRaw);
-    const { code, language, files, mainClass, stdin } = params;
-
-    const langParsed = ActivityLanguageSchema.safeParse(language);
-    if (!langParsed.success) throw new Error("Invalid language.");
-    const lang = langParsed.data;
-    if (!isLanguageSupportedForExecution(lang)) throw new Error(`Language "${lang}" is not supported for /run yet.`);
-    const profile = getLanguageProfile(lang);
-    if (!profile.executionAdapter) throw new Error(`No execution adapter configured for "${lang}".`);
-
-    const maxTotalCodeLength = 200_000; // 200KB
-    const maxStdinLength = 50_000; // 50KB
-    const maxFileCount = lang === "python" ? 20 : lang === "cpp" ? 40 : 12;
-    const filenamePattern =
-      lang === "python"
-        ? /^[A-Za-z_][A-Za-z0-9_]*\.py$/
-        : lang === "cpp"
-          ? /^[A-Za-z_][A-Za-z0-9_]*\.(?:cpp|h|hpp)$/
-          : lang === "sql"
-            ? /^[A-Za-z_][A-Za-z0-9_]*\.sql$/
-            : /^[A-Za-z_][A-Za-z0-9_]*\.java$/;
-
-    let safeStdin: string | undefined = undefined;
-    if (typeof stdin !== "undefined") {
-      if (typeof stdin !== "string") throw new Error("stdin must be a string.");
-      if (stdin.length > maxStdinLength) throw new Error(`stdin exceeds maximum length of ${maxStdinLength} characters.`);
-      safeStdin = stdin;
-    }
-
-    const runId = crypto.randomUUID();
-    runDb.create(runId, "judge.run", {
-      threadId: null,
-      metaJson: safeJsonStringify({
-        language: lang,
-        kind: files && typeof files === "object" ? "files" : "code",
-      }),
-    });
-
-    if (files && typeof files === "object") {
-      const entries = Object.entries(files as Record<string, unknown>);
-      if (entries.length === 0) throw new Error("files must be a non-empty object.");
-      if (entries.length > maxFileCount) throw new Error(`Too many files. Max is ${maxFileCount}.`);
-
-      let totalLen = safeStdin?.length ?? 0;
-      const safeFiles: Record<string, string> = {};
-      for (const [filename, source] of entries) {
-        if (typeof filename !== "string" || !filenamePattern.test(filename)) {
-          throw new Error(`Invalid filename "${String(filename)}".`);
+        let totalLen = safeStdin?.length ?? 0;
+        const safeFiles: Record<string, string> = {};
+        for (const [filename, source] of entries) {
+          if (typeof filename !== "string" || !filenamePattern.test(filename)) {
+            throw new Error(`Invalid filename "${String(filename)}".`);
+          }
+          if (typeof source !== "string" || !source.trim()) {
+            throw new Error(`File "${filename}" must be a non-empty string.`);
+          }
+          totalLen += source.length;
+          if (totalLen > maxTotalCodeLength) {
+            throw new Error(`Total code exceeds maximum length of ${maxTotalCodeLength} characters.`);
+          }
+          safeFiles[filename] = source;
         }
-        if (typeof source !== "string" || !source.trim()) {
-          throw new Error(`File "${filename}" must be a non-empty string.`);
+
+        if (lang === "python") {
+          const hasMain = entries.some(([filename]) => filename === "main.py");
+          if (!hasMain) throw new Error('Python /run requires a "main.py" file.');
         }
-        totalLen += source.length;
-        if (totalLen > maxTotalCodeLength) {
-          throw new Error(`Total code exceeds maximum length of ${maxTotalCodeLength} characters.`);
+        if (lang === "cpp") {
+          const hasMain = entries.some(([filename]) => filename === "main.cpp");
+          if (!hasMain) throw new Error('C++ /run requires a "main.cpp" file.');
         }
-        safeFiles[filename] = source;
+        if (lang === "sql") {
+          throw new Error('SQL does not support /run yet. Use /submit (Run tests).');
+        }
+
+        const execReq: {
+          kind: "files";
+          files: Record<string, string>;
+          mainClass?: string;
+          stdin?: string;
+        } = { kind: "files", files: safeFiles };
+        if (typeof mainClass === "string" && mainClass.trim()) execReq.mainClass = mainClass.trim();
+        if (typeof safeStdin === "string") execReq.stdin = safeStdin;
+
+        const result = await profile.executionAdapter.run(execReq);
+        try {
+          runEventDb.append(runId, 1, "result", safeJsonStringify({ stdout: result.stdout, stderr: result.stderr }));
+          runDb.finish(runId, "succeeded");
+        } catch {
+          // ignore
+        }
+        return { stdout: result.stdout, stderr: result.stderr, runId };
       }
 
-      if (lang === "python") {
-        const hasMain = entries.some(([filename]) => filename === "main.py");
-        if (!hasMain) throw new Error('Python /run requires a "main.py" file.');
+      if (typeof code !== "string" || !code.trim()) {
+        throw new Error("Provide either code (string) or files (object).");
       }
-      if (lang === "cpp") {
-        const hasMain = entries.some(([filename]) => filename === "main.cpp");
-        if (!hasMain) throw new Error('C++ /run requires a "main.cpp" file.');
-      }
-      if (lang === "sql") {
-        throw new Error('SQL does not support /run yet. Use /submit (Run tests).');
-      }
+      const total = code.length + (safeStdin?.length ?? 0);
+      if (total > maxTotalCodeLength) throw new Error(`Code exceeds maximum length of ${maxTotalCodeLength} characters.`);
 
-      const execReq: {
-        kind: "files";
-        files: Record<string, string>;
-        mainClass?: string;
-        stdin?: string;
-      } = { kind: "files", files: safeFiles };
-      if (typeof mainClass === "string" && mainClass.trim()) execReq.mainClass = mainClass.trim();
+      const execReq: { kind: "code"; code: string; stdin?: string } = { kind: "code", code };
       if (typeof safeStdin === "string") execReq.stdin = safeStdin;
-
       const result = await profile.executionAdapter.run(execReq);
       try {
         runEventDb.append(runId, 1, "result", safeJsonStringify({ stdout: result.stdout, stderr: result.stderr }));
@@ -484,168 +607,171 @@ async function handle(method: string, paramsRaw: unknown): Promise<unknown> {
         // ignore
       }
       return { stdout: result.stdout, stderr: result.stderr, runId };
-    }
+    },
+  },
 
-    if (typeof code !== "string" || !code.trim()) {
-      throw new Error("Provide either code (string) or files (object).");
-    }
-    const total = code.length + (safeStdin?.length ?? 0);
-    if (total > maxTotalCodeLength) throw new Error(`Code exceeds maximum length of ${maxTotalCodeLength} characters.`);
+  "judge.submit": {
+    schema: z
+      .object({
+        language: ActivityLanguageSchema.optional(),
+        testSuite: z.string().min(1).max(200_000),
+        code: z.string().min(1).max(200_000).optional(),
+        files: z.record(z.string(), z.string()).optional(),
+        activityId: z.string().min(1).max(128).optional(),
+        problemId: z.string().min(1).max(128).optional(),
+      })
+      .passthrough()
+      .refine((v) => Boolean(v.code) !== Boolean(v.files), { message: 'Provide either "code" or "files".' }),
+    handler: async (paramsRaw) => {
+      const params = requireParams(paramsRaw);
+      const { code, testSuite, activityId, problemId, files, language } = params;
 
-    const execReq: { kind: "code"; code: string; stdin?: string } = { kind: "code", code };
-    if (typeof safeStdin === "string") execReq.stdin = safeStdin;
-    const result = await profile.executionAdapter.run(execReq);
-    try {
-      runEventDb.append(runId, 1, "result", safeJsonStringify({ stdout: result.stdout, stderr: result.stderr }));
-      runDb.finish(runId, "succeeded");
-    } catch {
-      // ignore
-    }
-    return { stdout: result.stdout, stderr: result.stderr, runId };
-  }
-
-  if (method === "judge.submit") {
-    const params = requireParams(paramsRaw);
-    const { code, testSuite, activityId, problemId, files, language } = params;
-
-    if (typeof testSuite !== "string" || !testSuite.trim()) {
-      throw new Error("testSuite is required for graded execution. Use /run for code-only execution.");
-    }
-
-    const langParsed = ActivityLanguageSchema.safeParse(language ?? "java");
-    if (!langParsed.success) throw new Error("Invalid language.");
-    const lang = langParsed.data;
-    if (!isLanguageSupportedForJudge(lang)) throw new Error(`Language "${lang}" is not supported for /submit yet.`);
-    const profile = getLanguageProfile(lang);
-    if (!profile.judgeAdapter) throw new Error(`No judge adapter configured for "${lang}".`);
-
-    const maxTotalCodeLength = 200_000; // 200KB
-    const maxFileCount = lang === "python" ? 30 : lang === "cpp" ? 50 : 16;
-    const filenamePattern =
-      lang === "python"
-        ? /^[A-Za-z_][A-Za-z0-9_]*\.py$/
-        : lang === "cpp"
-          ? /^[A-Za-z_][A-Za-z0-9_]*\.(?:cpp|h|hpp)$/
-          : lang === "sql"
-            ? /^[A-Za-z_][A-Za-z0-9_]*\.sql$/
-            : /^[A-Za-z_][A-Za-z0-9_]*\.java$/;
-
-    const runId = crypto.randomUUID();
-    runDb.create(runId, "judge.submit", {
-      threadId: null,
-      metaJson: safeJsonStringify({
-        language: lang,
-        kind: files && typeof files === "object" ? "files" : "code",
-        activityId: typeof activityId === "string" ? activityId : null,
-        problemId: typeof problemId === "string" ? problemId : null,
-      }),
-    });
-
-    let result: any;
-    let codeForPersistence: string | null = null;
-
-    if (files && typeof files === "object") {
-      const entries = Object.entries(files as Record<string, unknown>);
-      if (entries.length === 0) throw new Error("files must be a non-empty object.");
-      if (entries.length > maxFileCount) throw new Error(`Too many files. Max is ${maxFileCount}.`);
-
-      let totalLen = testSuite.length;
-      const safeFiles: Record<string, string> = {};
-      for (const [filename, source] of entries) {
-        if (typeof filename !== "string" || !filenamePattern.test(filename)) {
-          throw new Error(`Invalid filename "${String(filename)}".`);
-        }
-        if (typeof source !== "string" || !source.trim()) {
-          throw new Error(`File "${filename}" must be a non-empty string.`);
-        }
-        totalLen += source.length;
-        if (totalLen > maxTotalCodeLength) throw new Error(`Total code exceeds maximum length of ${maxTotalCodeLength} characters.`);
-        safeFiles[filename] = source;
+      if (typeof testSuite !== "string" || !testSuite.trim()) {
+        throw new Error("testSuite is required for graded execution. Use /run for code-only execution.");
       }
 
-      if (lang === "python") {
-        if (Object.prototype.hasOwnProperty.call(safeFiles, "test_solution.py")) {
-          throw new Error('files must not include "test_solution.py".');
+      const langParsed = ActivityLanguageSchema.safeParse(language ?? "java");
+      if (!langParsed.success) throw new Error("Invalid language.");
+      const lang = langParsed.data;
+      if (!isLanguageSupportedForJudge(lang)) throw new Error(`Language "${lang}" is not supported for /submit yet.`);
+      const profile = getLanguageProfile(lang);
+      if (!profile.judgeAdapter) throw new Error(`No judge adapter configured for "${lang}".`);
+
+      const maxTotalCodeLength = 200_000; // 200KB
+      const maxFileCount = lang === "python" ? 30 : lang === "cpp" ? 50 : 16;
+      const filenamePattern =
+        lang === "python"
+          ? /^[A-Za-z_][A-Za-z0-9_]*\.py$/
+          : lang === "cpp"
+            ? /^[A-Za-z_][A-Za-z0-9_]*\.(?:cpp|h|hpp)$/
+            : lang === "sql"
+              ? /^[A-Za-z_][A-Za-z0-9_]*\.sql$/
+              : /^[A-Za-z_][A-Za-z0-9_]*\.java$/;
+
+      const runId = crypto.randomUUID();
+      runDb.create(runId, "judge.submit", {
+        threadId: null,
+        metaJson: safeJsonStringify({
+          language: lang,
+          kind: files && typeof files === "object" ? "files" : "code",
+          activityId: typeof activityId === "string" ? activityId : null,
+          problemId: typeof problemId === "string" ? problemId : null,
+        }),
+      });
+
+      let result: any;
+      let codeForPersistence: string | null = null;
+
+      if (files && typeof files === "object") {
+        const entries = Object.entries(files as Record<string, unknown>);
+        if (entries.length === 0) throw new Error("files must be a non-empty object.");
+        if (entries.length > maxFileCount) throw new Error(`Too many files. Max is ${maxFileCount}.`);
+
+        let totalLen = testSuite.length;
+        const safeFiles: Record<string, string> = {};
+        for (const [filename, source] of entries) {
+          if (typeof filename !== "string" || !filenamePattern.test(filename)) {
+            throw new Error(`Invalid filename "${String(filename)}".`);
+          }
+          if (typeof source !== "string" || !source.trim()) {
+            throw new Error(`File "${filename}" must be a non-empty string.`);
+          }
+          totalLen += source.length;
+          if (totalLen > maxTotalCodeLength) throw new Error(`Total code exceeds maximum length of ${maxTotalCodeLength} characters.`);
+          safeFiles[filename] = source;
         }
-        if (!Object.prototype.hasOwnProperty.call(safeFiles, "solution.py")) {
-          throw new Error('Python /submit requires a "solution.py" file.');
+
+        if (lang === "python") {
+          if (Object.prototype.hasOwnProperty.call(safeFiles, "test_solution.py")) {
+            throw new Error('files must not include "test_solution.py".');
+          }
+          if (!Object.prototype.hasOwnProperty.call(safeFiles, "solution.py")) {
+            throw new Error('Python /submit requires a "solution.py" file.');
+          }
         }
+        if (lang === "cpp") {
+          if (Object.prototype.hasOwnProperty.call(safeFiles, "test.cpp")) {
+            throw new Error('files must not include "test.cpp".');
+          }
+          if (!Object.prototype.hasOwnProperty.call(safeFiles, "solution.cpp")) {
+            throw new Error('C++ /submit requires a "solution.cpp" file.');
+          }
+          const cppSources = Object.keys(safeFiles).filter((f) => f.endsWith(".cpp") && f !== "solution.cpp");
+          if (cppSources.length > 0) {
+            throw new Error(`C++ /submit supports "solution.cpp" plus optional headers only. Remove: ${cppSources.join(", ")}`);
+          }
+        }
+        if (lang === "sql") {
+          if (!Object.prototype.hasOwnProperty.call(safeFiles, "solution.sql")) {
+            throw new Error('SQL /submit requires a "solution.sql" file.');
+          }
+          const extras = Object.keys(safeFiles).filter((f) => f !== "solution.sql");
+          if (extras.length > 0) {
+            throw new Error(`SQL /submit supports only solution.sql. Remove: ${extras.join(", ")}`);
+          }
+        }
+
+        result = await profile.judgeAdapter.judge({ kind: "files", files: safeFiles, testSuite });
+        codeForPersistence = JSON.stringify(safeFiles);
+      } else {
+        if (typeof code !== "string" || !code.trim()) {
+          throw new Error("code is required non-empty string.");
+        }
+        if (code.length + testSuite.length > maxTotalCodeLength) {
+          throw new Error(`Total code exceeds maximum length of ${maxTotalCodeLength} characters.`);
+        }
+        result = await profile.judgeAdapter.judge({ kind: "code", code, testSuite });
+        codeForPersistence = code;
       }
-      if (lang === "cpp") {
-        if (Object.prototype.hasOwnProperty.call(safeFiles, "test.cpp")) {
-          throw new Error('files must not include "test.cpp".');
-        }
-        if (!Object.prototype.hasOwnProperty.call(safeFiles, "solution.cpp")) {
-          throw new Error('C++ /submit requires a "solution.cpp" file.');
-        }
-        const cppSources = Object.keys(safeFiles).filter((f) => f.endsWith(".cpp") && f !== "solution.cpp");
-        if (cppSources.length > 0) {
-          throw new Error(`C++ /submit supports "solution.cpp" plus optional headers only. Remove: ${cppSources.join(", ")}`);
-        }
-      }
-      if (lang === "sql") {
-        if (!Object.prototype.hasOwnProperty.call(safeFiles, "solution.sql")) {
-          throw new Error('SQL /submit requires a "solution.sql" file.');
-        }
-        const extras = Object.keys(safeFiles).filter((f) => f !== "solution.sql");
-        if (extras.length > 0) {
-          throw new Error(`SQL /submit supports only solution.sql. Remove: ${extras.join(", ")}`);
+
+      // Persist submissions locally (workspace-scoped DB file).
+      if (typeof activityId === "string" && typeof problemId === "string") {
+        const dbActivity = activityDb.findById(activityId);
+        if (dbActivity) {
+          const totalTests = result.passedTests.length + result.failedTests.length;
+          submissionDb.create(
+            activityId,
+            problemId,
+            codeForPersistence ?? "",
+            result.success,
+            result.passedTests.length,
+            totalTests,
+            result.executionTimeMs
+          );
         }
       }
 
-      result = await profile.judgeAdapter.judge({ kind: "files", files: safeFiles, testSuite });
-      codeForPersistence = JSON.stringify(safeFiles);
-    } else {
-      if (typeof code !== "string" || !code.trim()) {
-        throw new Error("code is required non-empty string.");
-      }
-      if (code.length + testSuite.length > maxTotalCodeLength) {
-        throw new Error(`Total code exceeds maximum length of ${maxTotalCodeLength} characters.`);
-      }
-      result = await profile.judgeAdapter.judge({ kind: "code", code, testSuite });
-      codeForPersistence = code;
-    }
-
-    // Persist submissions locally (workspace-scoped DB file).
-    if (typeof activityId === "string" && typeof problemId === "string") {
-      const dbActivity = activityDb.findById(activityId);
-      if (dbActivity) {
-        const totalTests = result.passedTests.length + result.failedTests.length;
-        submissionDb.create(
-          activityId,
-          problemId,
-          codeForPersistence ?? "",
-          result.success,
-          result.passedTests.length,
-          totalTests,
-          result.executionTimeMs
+      try {
+        runEventDb.append(
+          runId,
+          1,
+          "result",
+          safeJsonStringify({
+            success: Boolean(result?.success),
+            passedTests: Array.isArray(result?.passedTests) ? result.passedTests : [],
+            failedTests: Array.isArray(result?.failedTests) ? result.failedTests : [],
+            executionTimeMs: typeof result?.executionTimeMs === "number" ? result.executionTimeMs : null,
+            timedOut: typeof result?.timedOut === "boolean" ? result.timedOut : null,
+            exitCode: typeof result?.exitCode === "number" ? result.exitCode : null,
+          })
         );
+        runDb.finish(runId, "succeeded");
+      } catch {
+        // ignore
       }
-    }
 
-    try {
-      runEventDb.append(
-        runId,
-        1,
-        "result",
-        safeJsonStringify({
-          success: Boolean(result?.success),
-          passedTests: Array.isArray(result?.passedTests) ? result.passedTests : [],
-          failedTests: Array.isArray(result?.failedTests) ? result.failedTests : [],
-          executionTimeMs: typeof result?.executionTimeMs === "number" ? result.executionTimeMs : null,
-          timedOut: typeof result?.timedOut === "boolean" ? result.timedOut : null,
-          exitCode: typeof result?.exitCode === "number" ? result.exitCode : null,
-        })
-      );
-      runDb.finish(runId, "succeeded");
-    } catch {
-      // ignore
-    }
+      return { ...result, runId };
+    },
+  },
+};
 
-    return { ...result, runId };
+async function handle(method: string, paramsRaw: unknown): Promise<unknown> {
+  const def = rpcHandlers[method];
+  if (!def) {
+    throw new Error(`Unknown method: ${method}`);
   }
-
-  throw new Error(`Unknown method: ${method}`);
+  const validated = def.schema ? validateOrThrow(def.schema, paramsRaw) : paramsRaw;
+  return def.handler(validated);
 }
 
 function onMessage(raw: unknown) {
